@@ -1,0 +1,215 @@
+@import 'tailwindcss';
+
+/*
+  SIMULYN design tokens.
+
+  The product is half programming lab, half electronics bench, so the surface
+  language is borrowed from lab instruments: a near-black panel, violet as the
+  live/active colour, brass for measured values and hairline rules, and a
+  monospace utility face for every label and unit.
+*/
+@theme {
+  --color-ink: #0a0a14;
+  --color-ink-raised: #11111f;
+  --color-ink-sunken: #07070f;
+
+  --color-violet: #7352b8;
+  --color-violet-lit: #a78bfa;
+  --color-violet-dim: #2a2142;
+
+  --color-brass: #c7a346;
+  --color-brass-lit: #e8cc80;
+  --color-brass-dim: #33291163;
+
+  --color-paper: #e9e9f2;
+  --color-muted: #8b8ba7;
+  --color-faint: #5a5a75;
+
+  --color-trace: #4ade80;
+  --color-fault: #fb7185;
+  --color-warn: #fbbf24;
+
+  --color-line: #ffffff14;
+  --color-line-strong: #ffffff26;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, 'SF Mono', monospace;
+
+  --radius-panel: 14px;
+
+  --ease-instrument: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+
+  html {
+    scrollbar-color: #2a2a40 transparent;
+  }
+
+  body {
+    background-color: var(--color-ink);
+    color: var(--color-paper);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+
+  /* Ambient bench light: two soft sources, fixed so panels move against them. */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+      radial-gradient(60rem 40rem at 12% -10%, #7352b826, transparent 60%),
+      radial-gradient(45rem 35rem at 95% 8%, #c7a34614, transparent 55%);
+  }
+
+  ::selection {
+    background: var(--color-violet);
+    color: white;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-violet-lit);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #2a2a40;
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3d3d5c;
+    background-clip: content-box;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* The panel: every card in the product is one of these. */
+  .glass {
+    background: color-mix(in srgb, var(--color-ink-raised) 72%, transparent);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-panel);
+  }
+
+  .glass-lift {
+    transition:
+      border-color 200ms var(--ease-instrument),
+      transform 200ms var(--ease-instrument),
+      background-color 200ms var(--ease-instrument);
+  }
+  .glass-lift:hover {
+    border-color: var(--color-line-strong);
+    transform: translateY(-2px);
+  }
+
+  /*
+    Instrument label: every unit, axis and eyebrow in the product. Mono, small,
+    letterspaced — the counterweight to the large Inter numerals.
+  */
+  .instrument {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-faint);
+  }
+
+  /* Brass hairline used to separate a measurement from its label. */
+  .hairline {
+    background: linear-gradient(90deg, var(--color-brass) 0%, transparent 100%);
+    height: 1px;
+    opacity: 0.5;
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+}
+
+/* Markdown rendered inside problem statements. */
+.prose-lab {
+  color: var(--color-paper);
+  line-height: 1.7;
+}
+.prose-lab p {
+  margin-bottom: 0.9rem;
+}
+.prose-lab strong {
+  color: white;
+  font-weight: 600;
+}
+.prose-lab code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: #ffffff0f;
+  border: 1px solid var(--color-line);
+  border-radius: 5px;
+  padding: 0.1em 0.4em;
+  color: var(--color-brass-lit);
+}
+.prose-lab pre {
+  background: var(--color-ink-sunken);
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  padding: 0.9rem;
+  overflow-x: auto;
+  margin-bottom: 0.9rem;
+}
+.prose-lab pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-paper);
+}
+.prose-lab ul,
+.prose-lab ol {
+  margin: 0 0 0.9rem 1.1rem;
+  list-style: disc;
+}
+.prose-lab ol {
+  list-style: decimal;
+}
+.prose-lab li {
+  margin-bottom: 0.35rem;
+}
+.prose-lab h1,
+.prose-lab h2,
+.prose-lab h3 {
+  font-weight: 600;
+  color: white;
+  margin: 1.3rem 0 0.6rem;
+  letter-spacing: -0.01em;
+}
+.prose-lab a {
+  color: var(--color-violet-lit);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
