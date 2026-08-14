@@ -42,6 +42,7 @@ export interface SubmissionResponse {
     input: string;
     expected: string;
     actual: string | null;
+    stdout?: string | null;
     passed: boolean;
     stderr: string | null;
     exitCode: number | null;
@@ -179,6 +180,8 @@ export class SubmissionsService {
         input: r.input,
         expected: r.expected,
         actual: r.actual,
+        // Live only — debug output is not worth a column on TestResult.
+        stdout: r.stdout,
         passed: r.passed,
         stderr: r.stderr,
         exitCode: r.exitCode,

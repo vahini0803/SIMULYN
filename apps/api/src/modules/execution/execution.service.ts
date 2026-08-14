@@ -5,7 +5,13 @@ import { parseJsonOrNull, type ElectronicsQuestion } from '@simulyn/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { outputsMatch } from './compare';
 import { Executor, normaliseJavaSource, type LangKey, type RunOutcome } from './executor';
-import { assertValidHarness, buildProgram, HarnessError, type HarnessSpec } from './harness';
+import {
+  assertValidHarness,
+  buildProgram,
+  HarnessError,
+  RESULT_MARKER,
+  type HarnessSpec,
+} from './harness';
 
 export interface TestOutcome {
   index: number;
@@ -13,11 +19,31 @@ export interface TestOutcome {
   input: string;
   expected: string;
   actual: string | null;
+  /** Anything the student printed themselves — never part of the comparison. */
+  stdout: string | null;
   passed: boolean;
   stderr: string | null;
   exitCode: number | null;
   timedOut: boolean;
   executionMs: number;
+}
+
+/**
+ * Splits the driver's return value from whatever the student printed.
+ *
+ * Without this a stray `print()` inside an otherwise correct solution would
+ * land in stdout ahead of the result and fail every case.
+ */
+export function splitDriverOutput(raw: string): { actual: string; studentOutput: string } {
+  // lastIndexOf: the driver writes its marker last, so a student echoing the
+  // same string earlier cannot hijack the parse.
+  const at = raw.lastIndexOf(RESULT_MARKER);
+  if (at === -1) return { actual: raw.trim(), studentOutput: '' };
+
+  return {
+    actual: raw.slice(at + RESULT_MARKER.length).trim(),
+    studentOutput: raw.slice(0, at).trim(),
+  };
 }
 
 export interface EvaluationResult {
@@ -149,7 +175,7 @@ export class ExecutionService implements OnModuleInit {
       const results: TestOutcome[] = [];
       for (const [index, testCase] of problem.testCases.entries()) {
         const run = await prepared.run(testCase.input, { timeoutMs: this.timeoutMs });
-        const actual = run.stdout.trim();
+        const { actual, studentOutput } = splitDriverOutput(run.stdout);
         const passed =
           !run.timedOut &&
           run.exitCode === 0 &&
@@ -161,6 +187,7 @@ export class ExecutionService implements OnModuleInit {
           input: testCase.input,
           expected: testCase.expected,
           actual: actual || null,
+          stdout: studentOutput || null,
           passed,
           stderr: run.stderr.trim() || null,
           exitCode: run.exitCode,
@@ -195,6 +222,9 @@ export class ExecutionService implements OnModuleInit {
               input: 'hidden',
               expected: 'hidden',
               actual: r.actual === null ? null : 'hidden',
+              // Their own prints stay visible — it is their code, and it is
+              // often the only clue to why a hidden case failed.
+              stdout: r.stdout,
               stderr: r.stderr,
             }
           : r,

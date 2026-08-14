@@ -11,9 +11,11 @@ import { RolesGuard } from './common/guards/roles.guard';
 import { UserThrottlerGuard } from './common/guards/user-throttler.guard';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { PrismaModule } from './prisma/prisma.module';
+import { AdminModule } from './modules/admin/admin.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { ClassesModule } from './modules/classes/classes.module';
+import { DiscussionsModule } from './modules/discussions/discussions.module';
 import { ExamsModule } from './modules/exams/exams.module';
 import { ExecutionModule } from './modules/execution/execution.module';
 import { GamificationModule } from './modules/gamification/gamification.module';
@@ -45,6 +47,8 @@ import { UsersModule } from './modules/users/users.module';
     ProctoringModule,
     MentorModule,
     AnalyticsModule,
+    DiscussionsModule,
+    AdminModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

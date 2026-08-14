@@ -40,6 +40,13 @@ export interface HarnessSpec {
 
 export class HarnessError extends Error {}
 
+/**
+ * The driver prints the return value after this marker, so a student's own
+ * `print()` calls stay out of the graded comparison. Anything before it is
+ * their debug output and is shown back to them untouched.
+ */
+export const RESULT_MARKER = '__SIMULYN_RESULT__';
+
 const HARNESS_TYPES: HarnessType[] = [
   'int',
   'double',
@@ -195,6 +202,7 @@ def _simulyn_main():
         sys.exit(2)
 
     _simulyn_res = _fn(${args})
+    sys.stdout.write('\\n${RESULT_MARKER}')
     sys.stdout.write(json.dumps(${pythonResult(spec.returnType)}, separators=(',', ':')))
     sys.stdout.write('\\n')
 
@@ -302,7 +310,7 @@ ${userCode}
   }
 
   const _simulynRes = _fn(${args});
-  process.stdout.write(JSON.stringify(${jsResult(spec.returnType)}) + '\\n');
+  process.stdout.write('\\n${RESULT_MARKER}' + JSON.stringify(${jsResult(spec.returnType)}) + '\\n');
 })();
 `;
 }
@@ -582,7 +590,7 @@ int main() {
 ${decls}
     Solution _sol;
     auto _res = _sol.${fn}(${args});
-    cout << simulyn::toJson(_res) << endl;
+    cout << "\\n${RESULT_MARKER}" << simulyn::toJson(_res) << endl;
     return 0;
 }
 `;
@@ -867,7 +875,7 @@ ${readInput}
 ${decls}
         Solution _sol = new Solution();
         Object _res = _sol.${fn}(${args});
-        System.out.println(toJson(_res));
+        System.out.println("\\n${RESULT_MARKER}" + toJson(_res));
     }
 }
 `;

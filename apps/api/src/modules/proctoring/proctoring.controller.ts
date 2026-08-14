@@ -5,7 +5,7 @@ import { Role } from '@simulyn/shared';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user';
-import { QueryViolationsDto, RecordViolationDto } from './dto/violation.dto';
+import { FlagAttemptDto, QueryViolationsDto, RecordViolationDto } from './dto/violation.dto';
 import { ProctoringGateway, teacherRoom } from './proctoring.gateway';
 import { ProctoringService } from './proctoring.service';
 
@@ -41,5 +41,29 @@ export class ProctoringController {
   @ApiOperation({ summary: 'Snapshot of every attempt for the live proctor grid' })
   live(@Param('examId') examId: string, @CurrentUser() user: AuthenticatedUser) {
     return this.proctoring.liveBoard(examId, user);
+  }
+
+  @Post('attempts/:attemptId/flag')
+  @Roles(Role.TEACHER, Role.ADMIN)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Record a proctor note against an attempt',
+    description: 'Stored as a zero-weight MANUAL violation, so notes sit on the same timeline.',
+  })
+  async flag(
+    @Param('attemptId') attemptId: string,
+    @Body() dto: FlagAttemptDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    const recorded = await this.proctoring.flag(attemptId, dto.note, user);
+    this.gateway.server?.to(teacherRoom(recorded.examId)).emit('student-violation', recorded);
+    return recorded;
+  }
+
+  @Get('attempts/:attemptId/notes')
+  @Roles(Role.TEACHER, Role.ADMIN)
+  @ApiOperation({ summary: 'Proctor notes recorded against an attempt' })
+  notes(@Param('attemptId') attemptId: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.proctoring.notes(attemptId, user);
   }
 }

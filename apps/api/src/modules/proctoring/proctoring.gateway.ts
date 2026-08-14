@@ -265,6 +265,18 @@ export class ProctoringGateway implements OnGatewayConnection, OnGatewayDisconne
     return { ok: true, endsAt, expired };
   }
 
+  /**
+   * Live socket count on this namespace, for the admin health panel.
+   *
+   * A namespaced gateway is handed a Namespace rather than a Server, and its
+   * `sockets` is a Map — the Server type declares that property as a Namespace,
+   * so the shape is narrowed here rather than at the field.
+   */
+  get connectionCount(): number {
+    const namespace = this.server as unknown as { sockets?: { size?: number } };
+    return namespace?.sockets?.size ?? 0;
+  }
+
   /** Broadcast helper used when an exam window closes for everyone. */
   announceExamEnded(examId: string): void {
     this.server?.to(examRoom(examId)).emit('exam-ended', { examId, at: new Date().toISOString() });

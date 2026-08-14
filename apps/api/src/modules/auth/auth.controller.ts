@@ -1,10 +1,23 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Req,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiCookieAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Role } from '@simulyn/shared';
 import type { Request, Response } from 'express';
 
 import { REFRESH_COOKIE } from '../../config/configuration';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
 import { RefreshTokenGuard } from '../../common/guards/refresh-token.guard';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user';
 import { AuthService } from './auth.service';
@@ -70,6 +83,24 @@ export class AuthController {
     @Body() dto: ChangePasswordDto,
   ): Promise<{ success: boolean; mustChangePassword: boolean }> {
     return this.authService.changePassword(userId, dto);
+  }
+
+  @ApiBearerAuth()
+  @Roles(Role.ADMIN)
+  @Post('impersonate/:userId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Sign in as another user (admin)',
+    description:
+      'Returns that user’s session so an admin can reproduce a report. Admin accounts and deactivated accounts cannot be impersonated, and every use is logged.',
+  })
+  @ApiOkResponse({ type: AuthResponseDto })
+  impersonate(
+    @Param('userId') userId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<AuthResponseDto> {
+    return this.authService.impersonate(userId, user, res);
   }
 
   @ApiBearerAuth()

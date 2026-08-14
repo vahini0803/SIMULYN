@@ -30,6 +30,7 @@ export type {
   Badge,
   UserBadge,
   DiscussionPost,
+  DiscussionVote,
   MentorRequest,
 } from '@prisma/client';
 

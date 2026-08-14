@@ -30,7 +30,13 @@
     "db:push": "prisma db push",
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
-    "db:reset": "prisma migrate reset --force"
+    "db:reset": "prisma migrate reset --force",
+    "db:deploy": "prisma migrate deploy",
+    "db:migration:init": "node scripts/create-migration.mjs sqlite",
+    "db:postgres:schema": "node scripts/generate-postgres-schema.mjs",
+    "db:postgres:generate": "pnpm db:postgres:schema && prisma generate --schema prisma/postgres/schema.prisma",
+    "db:postgres:migrate": "pnpm db:postgres:schema && node scripts/create-migration.mjs postgres",
+    "db:postgres:deploy": "prisma migrate deploy --schema prisma/postgres/schema.prisma"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts",

@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
+import { DiscussionThread } from '@/components/discussion/DiscussionThread';
 import { PageTransition } from '@/components/layout/app-shell';
 import { CodeEditor } from '@/components/problem/code-editor';
 import { ElectronicsPanel } from '@/components/problem/electronics-panel';
@@ -188,6 +189,7 @@ export default function ProblemSolverPage() {
               All problems
             </Link>
             <ProblemBrief problem={problem} />
+            <DiscussionThread problemId={problem.id} />
           </div>
         </section>
 
@@ -297,7 +299,7 @@ export default function ProblemSolverPage() {
                   {tab === 'tests' ? (
                     <TestResults evaluation={evaluation} running={submitting} />
                   ) : tab === 'console' ? (
-                    <ConsoleOutput result={runResult} running={running} />
+                    <ConsoleOutput result={runResult} running={running} language={language} />
                   ) : (
                     <MentorPanel
                       problemId={problem.id}

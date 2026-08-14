@@ -1,6 +1,7 @@
 'use client';
 
 import { CalendarClock } from 'lucide-react';
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
 import { PageTransition } from '@/components/layout/app-shell';
@@ -66,7 +67,8 @@ export default function StudentExamsPage() {
               const untilStart = (start - Date.now()) / 1000;
 
               return (
-                <Panel key={exam.id} className="p-4">
+                <Link key={exam.id} href={`/student/exams/${exam.id}`} className="block">
+                  <Panel hover className="p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
@@ -104,7 +106,8 @@ export default function StudentExamsPage() {
                       ) : null}
                     </div>
                   </div>
-                </Panel>
+                  </Panel>
+                </Link>
               );
             })
           )}

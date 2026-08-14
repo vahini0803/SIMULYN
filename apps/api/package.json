@@ -10,7 +10,8 @@
     "start:prod": "node dist/main.js",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "echo \"(no unit tests yet)\"",
-    "test:smoke": "node test/smoke.mjs"
+    "test:smoke": "node test/smoke.mjs",
+    "test:phase5": "node test/phase5.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.12",

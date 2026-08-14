@@ -87,6 +87,31 @@ export class UsersService {
     return paginated(data, total, query);
   }
 
+  /**
+   * Narrow student search so a teacher can enroll people who already have an
+   * account. Deliberately limited: students only, active only, a handful of
+   * fields, and a minimum query length so it cannot be used to enumerate.
+   */
+  async lookupStudents(term: string) {
+    const query = term.trim();
+    if (query.length < 2) return [];
+
+    return this.prisma.user.findMany({
+      where: {
+        role: Role.STUDENT,
+        isActive: true,
+        OR: [
+          { username: { contains: query } },
+          { displayName: { contains: query } },
+          { email: { contains: query } },
+        ],
+      },
+      select: { id: true, username: true, displayName: true, avatar: true, email: true },
+      orderBy: { username: 'asc' },
+      take: 20,
+    });
+  }
+
   async findOne(id: string, requester: AuthenticatedUser): Promise<PublicUser> {
     this.assertSelfOrAdmin(requester, id);
     const user = await this.prisma.user.findUnique({ where: { id }, select: USER_SELECT });

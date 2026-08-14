@@ -9,7 +9,36 @@ import type { LangKey } from '@/lib/types';
 
 // Load Monaco from this server rather than a CDN — the deployment target may
 // have no outbound internet. scripts/copy-monaco.mjs puts the assets in place.
-loader.config({ paths: { vs: '/monaco/vs' } });
+const MONACO_BASE = '/monaco';
+
+loader.config({ paths: { vs: `${MONACO_BASE}/vs` } });
+
+/**
+ * Monaco's language services run in web workers, and a worker has no document
+ * to resolve relative URLs against — `fetch('/monaco/vs/…')` inside one throws
+ * "Failed to parse URL". So we hand Monaco a tiny bootstrap worker that sets an
+ * absolute baseUrl first, then loads Monaco's real worker entry point.
+ */
+if (typeof window !== 'undefined') {
+  let workerUrl: string | null = null;
+
+  (window as Window & { MonacoEnvironment?: unknown }).MonacoEnvironment = {
+    getWorkerUrl(): string {
+      if (workerUrl) return workerUrl;
+
+      const origin = window.location.origin;
+      const bootstrap = [
+        `self.MonacoEnvironment = { baseUrl: '${origin}${MONACO_BASE}/' };`,
+        `importScripts('${origin}${MONACO_BASE}/vs/base/worker/workerMain.js');`,
+      ].join('\n');
+
+      // Cached: Monaco spins up one worker per language service, and each call
+      // would otherwise leak another object URL.
+      workerUrl = URL.createObjectURL(new Blob([bootstrap], { type: 'text/javascript' }));
+      return workerUrl;
+    },
+  };
+}
 
 const MONACO_LANGUAGE: Record<LangKey, string> = {
   python: 'python',

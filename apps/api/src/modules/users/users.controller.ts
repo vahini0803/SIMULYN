@@ -25,6 +25,16 @@ export class UsersController {
     return this.usersService.findAll(query);
   }
 
+  @Get('lookup')
+  @Roles(Role.TEACHER, Role.ADMIN)
+  @ApiOperation({
+    summary: 'Search existing student accounts by username, name or email',
+    description: 'Needs at least two characters. Returns at most 20 active students.',
+  })
+  lookup(@Query('q') q = '') {
+    return this.usersService.lookupStudents(q);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get a user profile (admin, or your own account)' })
   findOne(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser): Promise<PublicUser> {

@@ -43,6 +43,14 @@ export function SignalTrace({ className }: { className?: string }) {
       const rect = canvas.getBoundingClientRect();
       const w = rect.width;
       const h = rect.height;
+
+      // A detached or not-yet-laid-out canvas measures 0x0. Skip the frame
+      // rather than drawing into nothing — every step below divides by these.
+      if (!(w >= 1 && h >= 1)) {
+        if (canvas.isConnected) raf = requestAnimationFrame(draw);
+        return;
+      }
+
       ctx.clearRect(0, 0, w, h);
 
       const mid = h / 2;
@@ -51,16 +59,19 @@ export function SignalTrace({ className }: { className?: string }) {
       const blend = (Math.sin(t * 0.35) + 1) / 2;
       const amplitude = h * 0.17 * (0.7 + (1 - pointer) * 0.6);
 
-      // Graticule: the faint measurement grid behind the trace.
+      // Graticule: the faint measurement grid behind the trace. Fixed division
+      // counts, so the step can never be zero.
       ctx.strokeStyle = '#ffffff0a';
       ctx.lineWidth = 1;
-      for (let x = 0; x <= w; x += w / 12) {
+      for (let i = 0; i <= 12; i++) {
+        const x = (w / 12) * i;
         ctx.beginPath();
         ctx.moveTo(x, 0);
         ctx.lineTo(x, h);
         ctx.stroke();
       }
-      for (let y = 0; y <= h; y += h / 6) {
+      for (let i = 0; i <= 6; i++) {
+        const y = (h / 6) * i;
         ctx.beginPath();
         ctx.moveTo(0, y);
         ctx.lineTo(w, y);
@@ -108,7 +119,9 @@ export function SignalTrace({ className }: { className?: string }) {
       }
 
       frame += 1;
-      raf = requestAnimationFrame(draw);
+      // Stop scheduling once React has taken the canvas out of the document,
+      // so the loop dies even if cleanup has not run yet.
+      if (canvas.isConnected) raf = requestAnimationFrame(draw);
     };
 
     resize();

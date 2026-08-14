@@ -47,6 +47,8 @@ async function bootstrap(): Promise<void> {
     .addTag('gamification', 'XP, levels, streaks, badges and leaderboards')
     .addTag('mentor', 'Socratic AI hints')
     .addTag('analytics', 'Class and problem analytics')
+    .addTag('discussions', 'Per-problem discussion threads')
+    .addTag('admin', 'System overview, health and configuration')
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);

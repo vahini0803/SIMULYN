@@ -10,7 +10,7 @@ import {
 
 import type { AuthenticatedUser } from '../../common/types/authenticated-user';
 import { PrismaService } from '../../prisma/prisma.service';
-import { RecordViolationDto, QueryViolationsDto } from './dto/violation.dto';
+import { QueryViolationsDto, RecordViolationDto } from './dto/violation.dto';
 
 export interface RecordedViolation {
   id: string;
@@ -60,7 +60,8 @@ export class ProctoringService {
       throw new ForbiddenException('You do not proctor this exam');
     }
 
-    if (attempt.submittedAt) {
+    // Staff may still annotate a finished attempt while reviewing it.
+    if (attempt.submittedAt && actor.role === Role.STUDENT) {
       throw new BadRequestException('This attempt has already been submitted');
     }
 
@@ -112,6 +113,39 @@ export class ProctoringService {
       violationCount: count,
       createdAt: violation.createdAt,
     };
+  }
+
+  /**
+   * A proctor's own observation about an attempt. Stored as a zero-weight
+   * MANUAL violation so notes and detections share one timeline.
+   */
+  async flag(examAttemptId: string, note: string, actor: AuthenticatedUser) {
+    return this.record(
+      {
+        examAttemptId,
+        typeKey: ViolationType.MANUAL,
+        weight: 0,
+        metadata: JSON.stringify({ note, by: actor.username }),
+      },
+      actor,
+    );
+  }
+
+  /** Proctor notes for an attempt, newest first. */
+  async notes(examAttemptId: string, requester: AuthenticatedUser) {
+    const rows = await this.list({ examAttemptId, typeKey: ViolationType.MANUAL }, requester);
+    return rows.map((row) => {
+      let note = '';
+      let by = '';
+      try {
+        const parsed = JSON.parse(row.metadata ?? '{}') as { note?: string; by?: string };
+        note = parsed.note ?? '';
+        by = parsed.by ?? '';
+      } catch {
+        note = row.metadata ?? '';
+      }
+      return { id: row.id, note, by, createdAt: row.createdAt };
+    });
   }
 
   async list(query: QueryViolationsDto, requester: AuthenticatedUser) {

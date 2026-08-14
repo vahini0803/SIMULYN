@@ -87,6 +87,8 @@ export interface TestOutcome {
   input: string;
   expected: string;
   actual: string | null;
+  /** What the student's own print/console calls produced, if anything. */
+  stdout?: string | null;
   passed: boolean;
   stderr: string | null;
   exitCode: number | null;
@@ -273,4 +275,248 @@ export interface MentorHint {
   provider: string;
   cached: boolean;
   latencyMs: number;
+}
+
+// ── Phase 5: teaching, exams, proctoring, discussion ──
+
+export interface ClassStudentProgress {
+  userId: string;
+  username: string;
+  displayName: string;
+  avatar: string | null;
+  joinedAt: string;
+  problemsSolved: number;
+  assignedProblems: number;
+  totalSubmissions: number;
+  passedSubmissions: number;
+  accuracy: number;
+  xp: number;
+  level: number;
+  currentStreak: number;
+}
+
+export interface ClassProblemAssignment {
+  id: string;
+  dueDate: string | null;
+  assignedAt: string;
+  problem: Problem;
+}
+
+export interface CategoryStat {
+  category: string;
+  attempts: number;
+  passed: number;
+  accuracy: number;
+}
+
+export interface ClassOverview {
+  class: { id: string; name: string; code: string };
+  students: number;
+  assignedProblems: number;
+  exams: number;
+  totalSubmissions: number;
+  passedSubmissions: number;
+  averageAccuracy: number;
+  activeStudents: number;
+  problemsSolved: number;
+  categories: CategoryStat[];
+  weakestCategories: CategoryStat[];
+}
+
+export interface ClassroomInsights {
+  stats: ClassOverview;
+  insights: string | null;
+  provider: string;
+  error: string | null;
+}
+
+export interface AnalyticsStudentRow {
+  user: { id: string; username: string; displayName: string; avatar: string | null };
+  problemsSolved: number;
+  totalSubmissions: number;
+  passedSubmissions: number;
+  accuracy: number;
+  averageScore: number;
+  violations: number;
+  xp: number;
+  level: number;
+  currentStreak: number;
+  lastSubmissionAt: string | null;
+  lastLoginAt: string | null;
+}
+
+export interface ExamDetail extends ExamSummary {
+  createdById: string;
+  problems:
+    | { id: string; order: number; points: number; problem: Problem }[]
+    | null;
+}
+
+export interface ExamStartResponse {
+  attemptId: string;
+  examId: string;
+  title: string;
+  startedAt: string;
+  endsAt: string;
+  durationMin: number;
+  integrityScore: number;
+  questions: { index: number; examProblemId: string; points: number; problem: Problem }[];
+}
+
+export interface ExamAttemptRow {
+  attemptId: string;
+  user: { id: string; username: string; displayName: string; avatar: string | null };
+  startedAt: string;
+  submittedAt: string | null;
+  autoSubmitted: boolean;
+  totalScore: number;
+  maxScore: number;
+  percentage: number;
+  integrityScore: number;
+  violationCount: number;
+  submissionCount: number;
+  timeTakenMin: number | null;
+  status: 'SUBMITTED' | 'IN_PROGRESS';
+}
+
+export interface ExamResults {
+  exam: { id: string; title: string; status: ExamSummary['status']; maxScore: number };
+  summary: {
+    enrolled: number;
+    started: number;
+    submitted: number;
+    notStarted: number;
+    averageScore: number;
+    averageIntegrity: number;
+  };
+  attempts: ExamAttemptRow[];
+  notStarted: { user: ExamAttemptRow['user']; status: 'NOT_STARTED' }[];
+}
+
+export type ViolationTypeKey =
+  | 'COPY' | 'PASTE' | 'CUT' | 'RIGHTCLICK' | 'SELECTION' | 'DEVTOOLS' | 'TABSWITCH'
+  | 'BLUR' | 'REFRESH' | 'CLOSE' | 'MULTIMONITOR' | 'FULLSCREEN' | 'SCREENSHOT' | 'MANUAL';
+
+export interface RecordedViolation {
+  id: string;
+  examAttemptId: string;
+  examId: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  typeKey: ViolationTypeKey;
+  label: string;
+  message: string;
+  severity: 'low' | 'medium' | 'high';
+  critical: boolean;
+  weight: number;
+  timeRemaining: number | null;
+  integrityScore: number;
+  violationCount: number;
+  createdAt: string;
+}
+
+export interface LiveAttemptRow {
+  attemptId: string;
+  user: { id: string; username: string; displayName: string; avatar: string | null };
+  startedAt: string;
+  submittedAt: string | null;
+  integrityScore: number;
+  violationCount: number;
+  submissionCount: number;
+  recentViolations: { typeKey: ViolationTypeKey; weight: number; createdAt: string }[];
+}
+
+export interface ViolationRow {
+  id: string;
+  examAttemptId: string;
+  examId: string;
+  user: { id: string; username: string; displayName: string; avatar: string | null };
+  typeKey: ViolationTypeKey;
+  label: string;
+  severity: string;
+  critical: boolean;
+  weight: number;
+  timeRemaining: number | null;
+  integrityScore: number;
+  codeSnapshot?: string | null;
+  metadata: string | null;
+  createdAt: string;
+}
+
+export interface ProctorNote {
+  id: string;
+  note: string;
+  by: string;
+  createdAt: string;
+}
+
+// ── Phase 6: administration ──
+
+export interface SystemOverview {
+  users: { total: number; students: number; teachers: number; admins: number; inactive: number };
+  classes: number;
+  problems: { total: number; published: number };
+  submissions: number;
+  exams: { total: number; active: number };
+  attemptsInProgress: number;
+}
+
+export interface SystemHealth {
+  uptimeSeconds: number;
+  startedAt: string;
+  node: string;
+  platform: string;
+  environment: string;
+  memory: { rssBytes: number; heapUsedBytes: number; heapTotalBytes: number };
+  database: { provider: string; sizeBytes: number | null; path: string | null };
+  execution: {
+    languages: Record<LangKey, boolean>;
+    concurrency: { capacity: number; free: number; queued: number };
+    timeoutMs: number;
+  };
+  websockets: { namespace: string; connected: number };
+}
+
+export interface SettingEntry {
+  env: string;
+  label: string;
+  value: string;
+  secret?: boolean;
+}
+
+export interface SystemSettings {
+  readOnly: boolean;
+  groups: { key: string; label: string; note?: string; entries: SettingEntry[] }[];
+}
+
+export interface AdminUser {
+  id: string;
+  username: string;
+  email: string;
+  displayName: string;
+  avatar: string | null;
+  role: Role;
+  isActive: boolean;
+  mustChangePassword: boolean;
+  lastLoginAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DiscussionPost {
+  id: string;
+  problemId: string;
+  parentId: string | null;
+  content: string;
+  upvotes: number;
+  hasUpvoted: boolean;
+  isPinned: boolean;
+  isDeleted: boolean;
+  isAuthor: boolean;
+  canModerate: boolean;
+  createdAt: string;
+  updatedAt: string;
+  author: { id: string; username: string; displayName: string; avatar: string | null; role: Role };
+  replies: DiscussionPost[];
 }

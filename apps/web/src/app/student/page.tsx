@@ -207,7 +207,7 @@ export default function StudentDashboard() {
                   {upcoming.map((exam) => (
                     <li key={exam.id}>
                       <Link
-                        href="/student/exams"
+                        href={`/student/exams/${exam.id}`}
                         className="block rounded-lg border border-line p-3 transition-colors hover:border-violet-lit/40"
                       >
                         <div className="flex items-start justify-between gap-2">

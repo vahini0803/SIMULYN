@@ -1,7 +1,9 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -220,6 +222,40 @@ export class AuthService {
 
     this.logger.log(`${user.username} changed their password`);
     return { success: true, mustChangePassword: false };
+  }
+
+  /**
+   * Signs an admin in as another account, for reproducing a bug a student
+   * reports. Deliberately constrained: admins only, never another admin, never
+   * a deactivated account, and every use is logged with both usernames.
+   */
+  async impersonate(
+    targetUserId: string,
+    actor: AuthenticatedUser,
+    res: Response,
+  ): Promise<AuthResponseDto> {
+    if (actor.role !== Role.ADMIN) {
+      throw new ForbiddenException('Only an admin may impersonate another account');
+    }
+    if (targetUserId === actor.id) {
+      throw new BadRequestException('You are already signed in as this account');
+    }
+
+    const target = await this.prisma.user.findUnique({ where: { id: targetUserId } });
+    if (!target) throw new NotFoundException(`User ${targetUserId} not found`);
+    if (!target.isActive) {
+      throw new BadRequestException('That account is deactivated — reactivate it first');
+    }
+    if (target.role === Role.ADMIN) {
+      throw new ForbiddenException('Admin accounts cannot be impersonated');
+    }
+
+    const { accessToken, refreshToken } = await this.issueTokens(target);
+    res.cookie(REFRESH_COOKIE, refreshToken, this.cookieOptions());
+
+    this.logger.warn(`IMPERSONATION: ${actor.username} is now acting as ${target.username}`);
+
+    return { accessToken, user: this.toAuthUser(target) };
   }
 
   /** Used by the JWT strategy on every request. */

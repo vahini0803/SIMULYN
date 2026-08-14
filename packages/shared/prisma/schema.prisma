@@ -38,6 +38,7 @@ model User {
   gamification    Gamification?
   badges          UserBadge[]
   discussions     DiscussionPost[]
+  discussionVotes DiscussionVote[]
   mentorRequests  MentorRequest[]
 
   @@index([email])
@@ -381,10 +382,26 @@ model DiscussionPost {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   replies   DiscussionPost[] @relation("Replies")
+  votes     DiscussionVote[]
 
   @@index([problemId])
   @@index([authorId])
   @@index([parentId])
+}
+
+// One row per (post, voter). `DiscussionPost.upvotes` is the denormalised
+// counter kept in sync with these, so a post can only ever be upvoted once
+// per account.
+model DiscussionVote {
+  id        String         @id @default(cuid())
+  postId    String
+  userId    String
+  post      DiscussionPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime       @default(now())
+
+  @@unique([postId, userId])
+  @@index([postId])
 }
 
 // ── AI MENTOR ──

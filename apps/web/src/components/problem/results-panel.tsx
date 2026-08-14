@@ -4,8 +4,16 @@ import { AlertTriangle, CheckCircle2, Clock, Terminal, XCircle } from 'lucide-re
 
 import { Badge } from '@/components/ui/badge';
 import { Empty } from '@/components/ui/empty';
-import type { EvaluationResult, RunResult, TestOutcome } from '@/lib/types';
+import type { EvaluationResult, LangKey, RunResult, TestOutcome } from '@/lib/types';
 import { cn, formatDuration } from '@/lib/utils';
+
+/** Shown when a run produces no output, so the fix is one copy-paste away. */
+const PRINT_EXAMPLE: Record<LangKey, string> = {
+  python: 'print(twoSum([2, 7, 11, 15], 9))',
+  javascript: 'console.log(twoSum([2, 7, 11, 15], 9));',
+  cpp: 'int main() {\n    Solution s;\n    // call s.twoSum(...) and cout the result\n}',
+  java: 'public static void main(String[] args) {\n    // call new Solution().twoSum(...) and print it\n}',
+};
 
 function Row({ label, value, tone }: { label: string; value: string; tone?: 'pass' | 'fail' }) {
   return (
@@ -64,6 +72,7 @@ function TestCase({ outcome, index }: { outcome: TestOutcome; index: number }) {
             />
           </>
         )}
+        {outcome.stdout ? <Row label="Printed" value={outcome.stdout} /> : null}
         {outcome.stderr ? <Row label="stderr" value={outcome.stderr} tone="fail" /> : null}
       </div>
     </details>
@@ -142,7 +151,15 @@ export function TestResults({
   );
 }
 
-export function ConsoleOutput({ result, running }: { result: RunResult | null; running: boolean }) {
+export function ConsoleOutput({
+  result,
+  running,
+  language = 'python',
+}: {
+  result: RunResult | null;
+  running: boolean;
+  language?: LangKey;
+}) {
   if (running) {
     return (
       <div className="flex items-center gap-2.5 px-4 py-8 text-sm text-muted">
@@ -183,7 +200,25 @@ export function ConsoleOutput({ result, running }: { result: RunResult | null; r
         <pre className="mt-2 whitespace-pre-wrap text-fault">{result.stderr}</pre>
       ) : null}
       {!result.stdout && !result.stderr && !result.compileError ? (
-        <span className="text-faint">(no output)</span>
+        /*
+         * The commonest confusion on this screen: Run executes the file top to
+         * bottom, and the starter code only *defines* a function. Say so, and
+         * show the one line that fixes it.
+         */
+        <div className="rounded-lg border border-line bg-white/[0.02] px-3.5 py-3 font-sans">
+          <p className="text-[13px] text-paper">Your code ran, but printed nothing.</p>
+          <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
+            Run executes your file from top to bottom. Defining a function is not enough — call it
+            and print the result:
+          </p>
+          <pre className="mt-2.5 overflow-x-auto rounded-md border border-line bg-ink-sunken px-3 py-2 font-mono text-[12px] text-brass-lit">
+            {PRINT_EXAMPLE[language]}
+          </pre>
+          <p className="mt-2.5 text-[12.5px] text-muted">
+            To grade against the test cases instead, press <span className="text-paper">Submit</span>
+            {' '}— it calls your function for you.
+          </p>
+        </div>
       ) : null}
     </div>
   );

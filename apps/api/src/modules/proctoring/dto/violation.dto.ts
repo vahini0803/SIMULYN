@@ -37,6 +37,14 @@ export class RecordViolationDto {
   metadata?: string;
 }
 
+export class FlagAttemptDto {
+  @ApiProperty({ description: 'What the proctor observed' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(2000)
+  note!: string;
+}
+
 export class QueryViolationsDto {
   @ApiPropertyOptional()
   @IsString()
