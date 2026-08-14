@@ -14,6 +14,9 @@ const DEVTOOLS_GAP = 170;
 /** How often the display layout is re-checked on browsers without an event. */
 const DISPLAY_POLL_MS = 15_000;
 
+/** Violations at or above this count flag the attempt for the instructor. */
+export const FLAG_THRESHOLD = 10;
+
 export interface ProctoringState {
   connected: boolean;
   violationCount: number;
@@ -26,6 +29,12 @@ export interface ProctoringOptions {
   attemptId: string | null;
   /** Pauses every detector — used before the paper opens and after submit. */
   enabled: boolean;
+  /**
+   * Blocks copy, cut and paste outright instead of only recording them. Set
+   * during an exam; a student practising should still be able to use their
+   * clipboard.
+   */
+  blockClipboard?: boolean;
   /** Current editor contents, captured with each violation. */
   getSnapshot?: () => string;
   getCurrentQuestion?: () => number;
@@ -45,6 +54,7 @@ export function useProctoring({
   examId,
   attemptId,
   enabled,
+  blockClipboard = false,
   getSnapshot,
   getCurrentQuestion,
   getTimeRemaining,
@@ -135,9 +145,22 @@ export function useProctoring({
   useEffect(() => {
     if (!enabled || !attemptId) return;
 
-    const onCopy = () => report('COPY', 'Copying is disabled during the exam.');
-    const onCut = () => report('CUT', 'Cutting is disabled during the exam.');
-    const onPaste = () => report('PASTE', 'Pasting is disabled during the exam.');
+    /**
+     * During an exam the clipboard action is cancelled, not merely logged —
+     * otherwise a student can paste in a whole solution and take the ten-point
+     * hit as the price of doing it.
+     */
+    const clipboard = (event: ClipboardEvent, type: 'COPY' | 'CUT' | 'PASTE', message: string) => {
+      if (blockClipboard) event.preventDefault();
+      report(type, message);
+    };
+
+    const onCopy = (event: ClipboardEvent) =>
+      clipboard(event, 'COPY', 'Copying is disabled during the exam.');
+    const onCut = (event: ClipboardEvent) =>
+      clipboard(event, 'CUT', 'Cutting is disabled during the exam.');
+    const onPaste = (event: ClipboardEvent) =>
+      clipboard(event, 'PASTE', 'Pasting is disabled during the exam.');
     const onContextMenu = (event: MouseEvent) => {
       event.preventDefault();
       report('RIGHTCLICK', 'The context menu is disabled during the exam.');
@@ -152,10 +175,29 @@ export function useProctoring({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'PrintScreen') {
         report('SCREENSHOT', 'Screenshots are not permitted during the exam.');
+        return;
       }
+
       // Ctrl/Cmd+R and F5 reload the paper; the browser owns the actual reload.
       if (event.key === 'F5' || ((event.ctrlKey || event.metaKey) && event.key === 'r')) {
         report('REFRESH', 'Reloading the exam page is logged.');
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      const modifier = event.ctrlKey || event.metaKey;
+
+      // The usual routes into developer tools. Cancelling these only stops the
+      // shortcut — the menu still works, which is why the size heuristic in
+      // onResize stays as the backstop.
+      const devtoolsCombo =
+        event.key === 'F12' ||
+        (modifier && event.shiftKey && (key === 'i' || key === 'j' || key === 'c')) ||
+        (modifier && key === 'u');
+
+      if (devtoolsCombo) {
+        event.preventDefault();
+        report('DEVTOOLS', 'Developer tools are not allowed during the exam.', { key: event.key });
       }
     };
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -219,7 +261,7 @@ export function useProctoring({
       window.removeEventListener('beforeunload', onBeforeUnload);
       window.removeEventListener('resize', onResize);
     };
-  }, [enabled, attemptId, report]);
+  }, [enabled, attemptId, report, blockClipboard]);
 
   return { connected, violationCount, integrityScore, lastAlert };
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowLeft, Download, Radio, ShieldAlert, Users } from 'lucide-react';
+import { ArrowLeft, Download, Eye, EyeOff, Radio, ShieldAlert, Users } from 'lucide-react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -80,6 +80,7 @@ export default function ExamDetailPage() {
 
   const [exam, setExam] = useState<ExamDetail | null>(null);
   const [results, setResults] = useState<ExamResults | null>(null);
+  const [publishing, setPublishing] = useState(false);
 
   useEffect(() => {
     void api.get<ExamDetail>(`/exams/${examId}`).then(setExam).catch(() => undefined);
@@ -88,6 +89,26 @@ export default function ExamDetailPage() {
       .then(setResults)
       .catch(() => setResults(null));
   }, [examId]);
+
+  async function setPublished(isPublished: boolean) {
+    setPublishing(true);
+    try {
+      const updated = await api.patch<ExamDetail>(`/exams/${examId}`, { isPublished });
+      setExam((previous) => (previous ? { ...previous, ...updated } : updated));
+      toast.success(
+        isPublished ? 'Exam published' : 'Exam unpublished',
+        {
+          description: isPublished
+            ? 'Students can see it now, and can start it inside the window.'
+            : 'It is hidden from students again.',
+        },
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not change the exam');
+    } finally {
+      setPublishing(false);
+    }
+  }
 
   function exportCsv() {
     if (!results) return;
@@ -132,6 +153,17 @@ export default function ExamDetailPage() {
           </div>
 
           <div className="flex gap-2">
+            {exam && exam.status !== 'DRAFT' ? (
+              <Button
+                variant="ghost"
+                onClick={() => void setPublished(false)}
+                loading={publishing}
+                title="Hide this exam from students again"
+              >
+                <EyeOff className="h-4 w-4" />
+                Unpublish
+              </Button>
+            ) : null}
             <Button variant="outline" onClick={exportCsv} disabled={!results}>
               <Download className="h-4 w-4" />
               Export CSV
@@ -144,6 +176,27 @@ export default function ExamDetailPage() {
             </Link>
           </div>
         </header>
+
+        {/*
+          A draft is invisible to students however good the schedule looks, so
+          say that plainly rather than leaving the badge to carry it.
+        */}
+        {exam?.status === 'DRAFT' ? (
+          <div className="mt-5 flex flex-wrap items-center gap-4 rounded-panel border border-warn/30 bg-warn/[0.07] px-4 py-3.5">
+            <EyeOff className="h-5 w-5 shrink-0 text-warn" strokeWidth={1.7} />
+            <div className="min-w-0 flex-1">
+              <p className="text-[13.5px] font-medium text-warn">This exam is a draft</p>
+              <p className="mt-0.5 text-[12.5px] leading-relaxed text-muted">
+                Students cannot see it or start it, even once the scheduled window opens. Publish it
+                when the paper is ready — you can unpublish again any time before anyone starts.
+              </p>
+            </div>
+            <Button onClick={() => void setPublished(true)} loading={publishing}>
+              <Eye className="h-4 w-4" />
+              Publish exam
+            </Button>
+          </div>
+        ) : null}
 
         <section className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
           {results ? (
@@ -262,9 +315,12 @@ export default function ExamDetailPage() {
                           {attempt.timeTakenMin === null ? '—' : `${attempt.timeTakenMin}m`}
                         </td>
                         <td className="px-4 py-2.5 text-right">
-                          <Badge tone={attempt.status === 'SUBMITTED' ? 'pass' : 'warn'}>
-                            {attempt.autoSubmitted ? 'auto' : attempt.status.replace('_', ' ')}
-                          </Badge>
+                          <div className="flex items-center justify-end gap-1.5">
+                            {attempt.flagged ? <Badge tone="fail">FLAGGED</Badge> : null}
+                            <Badge tone={attempt.status === 'SUBMITTED' ? 'pass' : 'warn'}>
+                              {attempt.autoSubmitted ? 'auto' : attempt.status.replace('_', ' ')}
+                            </Badge>
+                          </div>
                         </td>
                       </tr>
                     ))}

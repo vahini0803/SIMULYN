@@ -1,5 +1,6 @@
 import type { LangKey } from './executor';
 import { normaliseJavaSource } from './executor';
+import { MAX_TRACE_EVENTS, TRACE_MARKER } from './trace.types';
 
 /**
  * Builds a complete, compilable program around a student's function.
@@ -882,6 +883,426 @@ ${decls}
 }
 
 // ────────────────────────────────────────────────────────── entry ──
+
+// ────────────────────────────────────────────────────── traced drivers ──
+
+/**
+ * Python traces properly: `sys.settrace` reports every line executed inside the
+ * student's own functions, with their locals. The op is inferred from the
+ * source line itself, which is a heuristic but a reliable one for the shapes
+ * these problems take.
+ */
+const PY_TRACE_SUPPORT = `
+import linecache
+
+_SIMULYN_MARKER = ${literal(TRACE_MARKER)}
+_SIMULYN_MAX = ${MAX_TRACE_EVENTS}
+_simulyn_step = [0]
+_simulyn_truncated = [False]
+
+# Names that conventionally hold an index, used to light up array cells.
+_SIMULYN_POINTERS = ('i', 'j', 'k', 'l', 'r', 'lo', 'hi', 'mid', 'left', 'right',
+                     'start', 'end', 'idx', 'index', 'p', 'q', 'fast', 'slow',
+                     'pos', 'top', 'head', 'tail')
+
+def _simulyn_safe(v, depth=0):
+    if depth > 3:
+        return '...'
+    if v is None or isinstance(v, bool) or isinstance(v, int) or isinstance(v, float):
+        return v
+    if isinstance(v, str):
+        return v if len(v) <= 200 else v[:200] + '...'
+    if isinstance(v, (list, tuple)):
+        return [_simulyn_safe(x, depth + 1) for x in list(v)[:64]]
+    if isinstance(v, dict):
+        return dict((str(k), _simulyn_safe(x, depth + 1)) for k, x in list(v.items())[:32])
+    if isinstance(v, (set, frozenset)):
+        return sorted([_simulyn_safe(x, depth + 1) for x in list(v)[:32]], key=repr)
+    if isinstance(v, ListNode):
+        out = []
+        node = v
+        guard = 0
+        while node is not None and guard < 64:
+            out.append(node.val)
+            node = node.next
+            guard += 1
+        return out
+    if isinstance(v, TreeNode):
+        return _simulyn_dump_tree(v)
+    return repr(v)[:120]
+
+def _simulyn_classify(src):
+    s = src.strip()
+    if s.startswith('return'):
+        return 'return'
+    if '.append(' in s or '.push(' in s or '.add(' in s or '.appendleft(' in s:
+        return 'push'
+    if '.pop(' in s or '.pop()' in s or '.popleft(' in s or '.remove(' in s or '.discard(' in s:
+        return 'pop'
+    # A tuple assignment such as "a, b = b, a" is the classic swap.
+    if '=' in s and ',' in s.split('=')[0] and '==' not in s:
+        return 'swap'
+    if s.startswith('for ') or s.startswith('while '):
+        return 'visit'
+    for token in ('==', '!=', '<=', '>=', ' < ', ' > ', ' in ', ' not '):
+        if token in s:
+            return 'compare'
+    return 'assign'
+
+def _simulyn_highlights(local_vars):
+    found = []
+    for name in _SIMULYN_POINTERS:
+        value = local_vars.get(name)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int) and 0 <= value < 4096:
+            found.append(value)
+    return sorted(set(found))
+
+def _simulyn_emit(op, local_vars, highlights, description):
+    if _simulyn_step[0] >= _SIMULYN_MAX:
+        _simulyn_truncated[0] = True
+        return
+    _simulyn_step[0] += 1
+    payload = {
+        'step': _simulyn_step[0],
+        'op': op,
+        'vars': local_vars,
+        'highlights': highlights,
+        'description': description,
+    }
+    sys.stdout.write(_SIMULYN_MARKER + json.dumps(payload, default=str) + '\\n')
+
+def _simulyn_tracer(frame, event, arg):
+    if _simulyn_step[0] >= _SIMULYN_MAX:
+        _simulyn_truncated[0] = True
+        return None
+
+    name = frame.f_code.co_name
+    # Everything the driver defines is prefixed, so this leaves student code.
+    if name.startswith('_simulyn') or name.startswith('__') or name == '<module>':
+        return None
+
+    if event == 'call':
+        return _simulyn_tracer
+    if event not in ('line', 'return'):
+        return _simulyn_tracer
+
+    snapshot = {}
+    for key, value in frame.f_locals.items():
+        if key.startswith('_simulyn'):
+            continue
+        snapshot[key] = _simulyn_safe(value)
+
+    if event == 'return':
+        _simulyn_emit('return', snapshot, [], name + ' returned ' + repr(_simulyn_safe(arg))[:80])
+        return _simulyn_tracer
+
+    source = linecache.getline(frame.f_code.co_filename, frame.f_lineno).strip()
+    if source:
+        _simulyn_emit(_simulyn_classify(source), snapshot, _simulyn_highlights(frame.f_locals), source)
+
+    return _simulyn_tracer
+`;
+
+function buildTracedPython(userCode: string, spec: HarnessSpec, testInput: string): string {
+  const fn = funcNameFor(spec, 'python');
+  const args = spec.params.map((p, i) => pythonArg(p.type, i)).join(', ');
+
+  return `${PY_PRELUDE}${PY_TRACE_SUPPORT}
+# ── student code ──
+${userCode}
+# ── traced driver ──
+
+def _simulyn_main():
+    _raw = ${literal(testInput)}
+    _lines = _raw.replace('\\r\\n', '\\n').replace('\\r', '\\n').split('\\n')
+
+    def _simulyn_arg(i):
+        if i >= len(_lines) or _lines[i].strip() == '':
+            return None
+        return json.loads(_lines[i])
+
+    _g = globals()
+    _fn = _g.get(${literal(fn)})
+    if not callable(_fn):
+        _cls = _g.get('Solution')
+        _fn = getattr(_cls(), ${literal(fn)}, None) if _cls is not None else None
+    if not callable(_fn):
+        sys.stderr.write("Could not find a function named '${fn}'.\\n")
+        sys.exit(2)
+
+    _simulyn_args = [${args}]
+
+    sys.settrace(_simulyn_tracer)
+    try:
+        _simulyn_res = _fn(*_simulyn_args)
+    finally:
+        sys.settrace(None)
+
+    sys.stdout.write('\\n${RESULT_MARKER}')
+    sys.stdout.write(json.dumps(_simulyn_safe(${pythonResult(spec.returnType)}), separators=(',', ':')))
+    sys.stdout.write('\\n')
+
+_simulyn_main()
+`;
+}
+
+/**
+ * JavaScript has no line tracer, so array arguments are handed over behind a
+ * Proxy: every indexed read becomes a compare and every indexed write an
+ * assign. That covers the array and string problems, which is where the
+ * animation earns its keep.
+ */
+const JS_TRACE_SUPPORT = `
+const _SIMULYN_MARKER = ${literal(TRACE_MARKER)};
+const _SIMULYN_MAX = ${MAX_TRACE_EVENTS};
+let _simulynStep = 0;
+let _simulynTruncated = false;
+
+function _simulynSafe(value, depth = 0) {
+  if (depth > 3) return '...';
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'string') return value.length <= 200 ? value : value.slice(0, 200) + '...';
+  if (Array.isArray(value)) return value.slice(0, 64).map((v) => _simulynSafe(v, depth + 1));
+  if (value instanceof Map) return Object.fromEntries([...value.entries()].slice(0, 32));
+  if (value instanceof Set) return [...value].slice(0, 32).map((v) => _simulynSafe(v, depth + 1));
+  if (typeof value === 'object') {
+    if ('val' in value && 'next' in value) return _simulynDumpList(value);
+    if ('val' in value && 'left' in value) return _simulynDumpTree(value);
+    const out = {};
+    for (const key of Object.keys(value).slice(0, 32)) out[key] = _simulynSafe(value[key], depth + 1);
+    return out;
+  }
+  return String(value).slice(0, 120);
+}
+
+function _simulynEmit(op, vars, highlights, description) {
+  if (_simulynStep >= _SIMULYN_MAX) { _simulynTruncated = true; return; }
+  _simulynStep += 1;
+  process.stdout.write(
+    _SIMULYN_MARKER +
+      JSON.stringify({ step: _simulynStep, op, vars, highlights, description }) +
+      '\\n',
+  );
+}
+
+/** Students can call this directly for a custom step. */
+globalThis.__simulynTrace = function (op, vars, highlights, description) {
+  _simulynEmit(op || 'assign', _simulynSafe(vars || {}), highlights || [], description || '');
+};
+
+function _simulynWatch(value, name) {
+  if (!Array.isArray(value)) return value;
+  return new Proxy(value, {
+    get(target, prop, receiver) {
+      // Only index access is interesting; length, methods and symbols are not.
+      if (typeof prop === 'string' && String(Number(prop)) === prop) {
+        _simulynEmit('compare', { [name]: _simulynSafe(target) }, [Number(prop)],
+          'read ' + name + '[' + prop + ']');
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+    set(target, prop, value, receiver) {
+      const ok = Reflect.set(target, prop, value, receiver);
+      if (typeof prop === 'string' && String(Number(prop)) === prop) {
+        _simulynEmit('assign', { [name]: _simulynSafe(target) }, [Number(prop)],
+          name + '[' + prop + '] = ' + JSON.stringify(_simulynSafe(value)));
+      }
+      return ok;
+    },
+  });
+}
+`;
+
+function buildTracedJavaScript(userCode: string, spec: HarnessSpec, testInput: string): string {
+  const fn = funcNameFor(spec, 'javascript');
+  const args = spec.params
+    .map((p, i) => `_simulynWatch(${jsArg(p.type, i)}, ${literal(p.name)})`)
+    .join(', ');
+
+  return `${JS_PRELUDE}${JS_TRACE_SUPPORT}
+// ── student code ──
+${userCode}
+// ── traced driver ──
+(function () {
+  const _raw = ${literal(testInput)};
+  const _lines = _raw.replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n').split('\\n');
+
+  function _simulynArg(i) {
+    if (i >= _lines.length || _lines[i].trim() === '') return null;
+    return JSON.parse(_lines[i]);
+  }
+
+  let _fn = null;
+  if (typeof ${fn} === 'function') {
+    _fn = ${fn};
+  } else if (typeof Solution === 'function') {
+    const _s = new Solution();
+    if (typeof _s.${fn} === 'function') _fn = _s.${fn}.bind(_s);
+  }
+  if (!_fn) {
+    process.stderr.write("Could not find a function named '${fn}'.\\n");
+    process.exit(2);
+  }
+
+  _simulynEmit('visit', {}, [], 'calling ${fn}');
+  const _simulynRes = _fn(${args});
+  _simulynEmit('return', { result: _simulynSafe(_simulynRes) }, [], '${fn} returned');
+
+  process.stdout.write('\\n${RESULT_MARKER}' + JSON.stringify(${jsResult(spec.returnType)}) + '\\n');
+})();
+`;
+}
+
+/**
+ * The compiled languages get entry and exit events plus a helper the student
+ * can call. Automatic step-by-step tracing would mean rewriting their source,
+ * which is a different and much larger job.
+ */
+const CPP_TRACE_SUPPORT = `
+namespace simulyn {
+inline int _traceStep = 0;
+inline const int TRACE_MAX = ${MAX_TRACE_EVENTS};
+
+inline void traceEmit(const string &op, const string &description) {
+    if (_traceStep >= TRACE_MAX) return;
+    _traceStep++;
+    cout << ${literal(TRACE_MARKER)}
+         << "{\\"step\\":" << _traceStep
+         << ",\\"op\\":\\"" << op
+         << "\\",\\"vars\\":{},\\"highlights\\":[],\\"description\\":\\"" << esc(description)
+         << "\\"}" << endl;
+}
+}  // namespace simulyn
+
+// Call this from your solution to add a step to the visualisation.
+#define SIMULYN_TRACE(op, description) simulyn::traceEmit(op, description)
+`;
+
+function buildTracedCpp(userCode: string, spec: HarnessSpec, testInput: string): string {
+  const fn = funcNameFor(spec, 'cpp');
+  const decls = spec.params.map((p, i) => `    auto _a${i} = ${cppArg(p.type, i)};`).join('\n');
+  const args = spec.params.map((_, i) => `_a${i}`).join(', ');
+
+  return `${CPP_PRELUDE}${CPP_TRACE_SUPPORT}
+// ── student code ──
+${userCode}
+// ── traced driver ──
+int main() {
+    ios::sync_with_stdio(false);
+    string _raw = string(${literal(testInput)});
+    vector<string> _lines;
+    {
+        string cur;
+        for (char c : _raw) {
+            if (c == '\\n') { _lines.push_back(cur); cur.clear(); }
+            else if (c != '\\r') cur += c;
+        }
+        _lines.push_back(cur);
+    }
+    auto _simulyn_line = [&](size_t i) -> string { return i < _lines.size() ? _lines[i] : string(""); };
+
+${decls}
+    Solution _sol;
+    simulyn::traceEmit("visit", "calling ${fn}");
+    auto _res = _sol.${fn}(${args});
+    simulyn::traceEmit("return", "${fn} returned");
+    cout << "\\n${RESULT_MARKER}" << simulyn::toJson(_res) << endl;
+    return 0;
+}
+`;
+}
+
+const JAVA_TRACE_SUPPORT = `
+    static int _traceStep = 0;
+    static final int TRACE_MAX = ${MAX_TRACE_EVENTS};
+
+    /** Call from your solution to add a step to the visualisation. */
+    static void trace(String op, String description) {
+        if (_traceStep >= TRACE_MAX) return;
+        _traceStep++;
+        System.out.println(${literal(TRACE_MARKER)} + "{\\"step\\":" + _traceStep
+            + ",\\"op\\":\\"" + op + "\\",\\"vars\\":{},\\"highlights\\":[],\\"description\\":\\""
+            + esc(description) + "\\"}");
+    }
+`;
+
+function buildTracedJava(userCode: string, spec: HarnessSpec, testInput: string): string {
+  const fn = funcNameFor(spec, 'java');
+  const { imports, body } = normaliseJavaSource(userCode);
+
+  const decls = spec.params
+    .map((p, i) => {
+      const { decl, expr } = javaArg(p.type, i);
+      return `        ${decl} _a${i} = ${expr};`;
+    })
+    .join('\n');
+  const args = spec.params.map((_, i) => `_a${i}`).join(', ');
+  const extraImports = imports.filter((i) => !i.includes('java.util.*')).join('\n');
+
+  return `import java.util.*;
+${extraImports}
+
+${JAVA_PRELUDE}
+// ── student code ──
+${body}
+// ── traced driver ──
+public class Main {
+${JAVA_SUPPORT}
+${JAVA_TRACE_SUPPORT}
+    static String[] _lines = new String[0];
+
+    static String _line(int i) { return i < _lines.length ? _lines[i] : ""; }
+
+    public static void main(String[] args) throws Exception {
+        String _raw = ${literal(testInput)};
+        _lines = _raw.replace("\\r\\n", "\\n").replace("\\r", "\\n").split("\\n", -1);
+
+${decls}
+        Solution _sol = new Solution();
+        trace("visit", "calling ${fn}");
+        Object _res = _sol.${fn}(${args});
+        trace("return", "${fn} returned");
+        System.out.println("\\n${RESULT_MARKER}" + toJson(_res));
+    }
+}
+`;
+}
+
+/** How much of a run each language can report. */
+export function traceFidelity(lang: LangKey): 'full' | 'partial' | 'manual' {
+  if (lang === 'python') return 'full';
+  if (lang === 'javascript') return 'partial';
+  return 'manual';
+}
+
+/**
+ * Builds a program that runs one test case and narrates itself.
+ *
+ * Unlike buildProgram the input is always baked in — a traced run is a single
+ * case the student asked to watch, never the whole suite.
+ */
+export function generateTracedDriver(
+  lang: LangKey,
+  userCode: string,
+  spec: HarnessSpec,
+  testInput: string,
+): string {
+  assertValidHarness(spec);
+
+  switch (lang) {
+    case 'python':
+      return buildTracedPython(userCode, spec, testInput);
+    case 'javascript':
+      return buildTracedJavaScript(userCode, spec, testInput);
+    case 'cpp':
+      return buildTracedCpp(userCode, spec, testInput);
+    case 'java':
+      return buildTracedJava(userCode, spec, testInput);
+  }
+}
 
 /**
  * @param testInput when supplied the input is baked into the program; when

@@ -6,7 +6,12 @@ import { Role } from '@simulyn/shared';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user';
-import { ElectronicsSubmitDto, RunCodeDto, SubmitCodeDto } from './dto/execute.dto';
+import {
+  ElectronicsSubmitDto,
+  RunCodeDto,
+  SubmitCodeDto,
+  TraceCodeDto,
+} from './dto/execute.dto';
 import { ExecutionService } from './execution.service';
 
 @ApiTags('execution')
@@ -45,6 +50,18 @@ export class ExecutionController {
   async submit(@Body() dto: SubmitCodeDto, @CurrentUser() user: AuthenticatedUser) {
     const result = await this.execution.evaluateProblem(dto.problemId, dto.code, dto.lang);
     return user.role === Role.STUDENT ? this.execution.maskHidden(result) : result;
+  }
+
+  @Post('trace')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Run one visible test case through a self-narrating driver',
+    description:
+      'Returns the trace the visualiser replays. Python is traced line by line; JavaScript reports array reads and writes; C++ and Java report only what the solution emits itself.',
+  })
+  trace(@Body() dto: TraceCodeDto) {
+    return this.execution.runWithTrace(dto.problemId, dto.code, dto.lang, dto.testCaseIndex ?? 0);
   }
 
   @Get('health')

@@ -373,6 +373,7 @@ export interface ExamAttemptRow {
   maxScore: number;
   percentage: number;
   integrityScore: number;
+  flagged: boolean;
   violationCount: number;
   submissionCount: number;
   timeTakenMin: number | null;
@@ -416,12 +417,24 @@ export interface RecordedViolation {
   createdAt: string;
 }
 
+export interface StudentFlaggedEvent {
+  attemptId: string;
+  examId: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  violationCount: number;
+  integrityScore: number;
+  at: string;
+}
+
 export interface LiveAttemptRow {
   attemptId: string;
   user: { id: string; username: string; displayName: string; avatar: string | null };
   startedAt: string;
   submittedAt: string | null;
   integrityScore: number;
+  flagged: boolean;
   violationCount: number;
   submissionCount: number;
   recentViolations: { typeKey: ViolationTypeKey; weight: number; createdAt: string }[];

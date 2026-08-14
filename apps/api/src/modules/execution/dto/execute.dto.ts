@@ -6,10 +6,12 @@ import {
   IsArray,
   IsDefined,
   IsIn,
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
   MaxLength,
+  Min,
   ValidateNested,
 } from 'class-validator';
 
@@ -48,6 +50,33 @@ export class SubmitCodeDto {
   @IsString()
   @IsNotEmpty()
   problemId!: string;
+}
+
+export class TraceCodeDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(MAX_CODE_LENGTH)
+  code!: string;
+
+  @ApiProperty({ enum: LANGUAGE_KEYS, example: 'python' })
+  @IsIn(LANGUAGE_KEYS as unknown as string[])
+  lang!: 'python' | 'javascript' | 'cpp' | 'java';
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  problemId!: string;
+
+  @ApiPropertyOptional({
+    default: 0,
+    description: 'Which visible test case to trace. Hidden cases cannot be traced.',
+  })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  testCaseIndex?: number;
 }
 
 export class ElectronicsAnswerDto {

@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
+import { useLockdown } from '@/components/layout/lockdown';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { LevelMeter } from '@/components/ui/meter';
@@ -40,6 +41,7 @@ export function AppShell({
   children: React.ReactNode;
 }) {
   const { user, logout } = useAuth();
+  const { locked } = useLockdown();
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -135,19 +137,24 @@ export function AppShell({
 
   return (
     <div className="flex min-h-dvh">
-      {/* Desktop rail */}
+      {/*
+        Desktop rail. During a locked-down exam the chrome is hidden rather
+        than unmounted: removing it would reshape the tree and remount the exam
+        page, losing the attempt and every answer typed so far.
+      */}
       <aside
         className={cn(
-          'sticky top-0 hidden h-dvh shrink-0 border-r border-line bg-ink-raised/40 backdrop-blur-xl transition-[width] duration-300 lg:block',
+          'sticky top-0 hidden h-dvh shrink-0 border-r border-line bg-ink-raised/40 backdrop-blur-xl transition-[width] duration-300',
+          locked ? 'lg:hidden' : 'lg:block',
           collapsed ? 'w-[72px]' : 'w-[228px]',
         )}
       >
         {sidebar}
       </aside>
 
-      {/* Mobile drawer */}
+      {/* Mobile drawer — never openable while an exam is locked down. */}
       <AnimatePresence>
-        {mobileOpen ? (
+        {mobileOpen && !locked ? (
           <>
             <motion.div
               initial={{ opacity: 0 }}
@@ -177,7 +184,12 @@ export function AppShell({
       </AnimatePresence>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 border-b border-line bg-ink/75 backdrop-blur-xl">
+        <header
+          className={cn(
+            'sticky top-0 z-30 border-b border-line bg-ink/75 backdrop-blur-xl',
+            locked && 'hidden',
+          )}
+        >
           <div className="flex items-center gap-4 px-4 py-3 sm:px-6">
             <button
               onClick={() => setMobileOpen(true)}

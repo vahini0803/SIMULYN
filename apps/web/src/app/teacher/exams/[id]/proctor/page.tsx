@@ -30,6 +30,7 @@ import type {
   LiveAttemptRow,
   ProctorNote,
   RecordedViolation,
+  StudentFlaggedEvent,
   ViolationRow,
 } from '@/lib/types';
 import { cn, formatClock, relativeTime } from '@/lib/utils';
@@ -45,6 +46,8 @@ interface StudentState {
   avatar: string | null;
   integrityScore: number;
   violationCount: number;
+  /** Set by the server once the attempt passes the violation threshold. */
+  flagged: boolean;
   currentQuestion: number | null;
   timeRemaining: number | null;
   lastSeen: number | null;
@@ -55,6 +58,8 @@ interface StudentState {
 type Status = 'active' | 'idle' | 'flagged' | 'offline' | 'submitted';
 
 function statusOf(student: StudentState, now: number): Status {
+  // A hard flag outranks everything, including a finished paper.
+  if (student.flagged) return 'flagged';
   if (student.submitted) return 'submitted';
   if (student.violationCount >= 4 || student.integrityScore < 60) return 'flagged';
   if (!student.online) return 'offline';
@@ -152,6 +157,7 @@ function ProctorBoard() {
                 avatar: row.user.avatar,
                 integrityScore: row.integrityScore,
                 violationCount: row.violationCount,
+                flagged: row.flagged,
                 currentQuestion: null,
                 timeRemaining: null,
                 lastSeen: null,
@@ -216,6 +222,20 @@ function ProctorBoard() {
         lastSeen: Date.now(),
       });
       if (event.critical) beep();
+    });
+
+    // Raised once, when an attempt crosses the violation threshold.
+    socket.on('student-flagged', (event: StudentFlaggedEvent) => {
+      upsert(event.attemptId, {
+        flagged: true,
+        violationCount: event.violationCount,
+        integrityScore: event.integrityScore,
+      });
+      beep();
+      toast.error(`${event.displayName} has been flagged`, {
+        description: `${event.violationCount} violations · integrity ${event.integrityScore}`,
+        duration: 10_000,
+      });
     });
 
     socket.on('student-disconnected', (event: { attemptId?: string }) => {
@@ -355,8 +375,15 @@ function ProctorBoard() {
                           size="sm"
                         />
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-[13.5px] text-paper">
-                            {student.displayName}
+                          <div className="flex items-center gap-1.5">
+                            <span className="truncate text-[13.5px] text-paper">
+                              {student.displayName}
+                            </span>
+                            {student.flagged ? (
+                              <span className="shrink-0 rounded border border-fault/50 bg-fault/20 px-1.5 py-px font-mono text-[9px] tracking-[0.1em] text-fault">
+                                FLAGGED
+                              </span>
+                            ) : null}
                           </div>
                           <div className="font-mono text-[10px] text-faint">
                             @{student.username}

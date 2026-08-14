@@ -452,6 +452,7 @@ export class ExamsService {
       maxScore: maxPoints,
       percentage: maxPoints === 0 ? 0 : Math.round((a.totalScore / maxPoints) * 100),
       integrityScore: a.integrityScore,
+      flagged: a.flagged,
       violationCount: a._count.violations,
       submissionCount: a._count.submissions,
       timeTakenMin: a.submittedAt
@@ -522,6 +523,7 @@ export class ExamsService {
       endsAt: examDeadline(attempt.startedAt, exam),
       totalScore: attempt.totalScore,
       integrityScore: attempt.integrityScore,
+      flagged: attempt.flagged,
       questionOrder: JSON.parse(attempt.questionOrder) as string[],
       submissions: attempt.submissions.map((s) => ({
         id: s.id,

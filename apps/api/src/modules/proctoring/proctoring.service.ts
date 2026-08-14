@@ -28,8 +28,15 @@ export interface RecordedViolation {
   timeRemaining: number | null;
   integrityScore: number;
   violationCount: number;
+  /** True once the attempt has crossed FLAG_THRESHOLD violations. */
+  flagged: boolean;
+  /** Set on the one violation that tipped it over, so the UI can alert once. */
+  justFlagged: boolean;
   createdAt: Date;
 }
+
+/** Violations at or above this count flag the attempt for the instructor. */
+export const FLAG_THRESHOLD = 10;
 
 @Injectable()
 export class ProctoringService {
@@ -88,6 +95,21 @@ export class ProctoringService {
       this.prisma.violation.count({ where: { examAttemptId: dto.examAttemptId } }),
     ]);
 
+    // Enough violations flags the attempt outright, independently of the
+    // integrity score — a run of low-weight events still means something.
+    const shouldFlag = count >= FLAG_THRESHOLD;
+    const justFlagged = shouldFlag && !attempt.flagged;
+
+    if (justFlagged) {
+      await this.prisma.examAttempt.update({
+        where: { id: dto.examAttemptId },
+        data: { flagged: true },
+      });
+      this.logger.warn(
+        `${attempt.user.username} FLAGGED after ${count} violations on attempt ${attempt.id}`,
+      );
+    }
+
     this.logger.warn(
       `${attempt.user.username}: ${dto.typeKey} (-${weight}) → integrity ${integrityScore}`,
     );
@@ -111,6 +133,8 @@ export class ProctoringService {
       timeRemaining: dto.timeRemaining ?? null,
       integrityScore: updated.integrityScore,
       violationCount: count,
+      flagged: shouldFlag,
+      justFlagged,
       createdAt: violation.createdAt,
     };
   }
@@ -222,6 +246,7 @@ export class ProctoringService {
       startedAt: a.startedAt,
       submittedAt: a.submittedAt,
       integrityScore: a.integrityScore,
+      flagged: a.flagged,
       violationCount: a._count.violations,
       submissionCount: a._count.submissions,
       recentViolations: a.violations.map((v) => ({

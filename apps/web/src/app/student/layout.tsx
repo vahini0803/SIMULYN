@@ -3,6 +3,7 @@
 import { CircuitBoard, FileClock, LayoutDashboard, Trophy, User } from 'lucide-react';
 
 import { AppShell, type NavItem } from '@/components/layout/app-shell';
+import { LockdownProvider } from '@/components/layout/lockdown';
 import { SkeletonPanel } from '@/components/ui/skeleton';
 import { useRequireRole } from '@/hooks/useAuth';
 
@@ -26,8 +27,10 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
   }
 
   return (
-    <AppShell role="STUDENT" nav={NAV}>
-      {children}
-    </AppShell>
+    <LockdownProvider>
+      <AppShell role="STUDENT" nav={NAV}>
+        {children}
+      </AppShell>
+    </LockdownProvider>
   );
 }

@@ -287,6 +287,8 @@ model ExamAttempt {
   totalScore     Int       @default(0)
   questionOrder  String    // JSON array of shuffled problem IDs
   integrityScore Int       @default(100)
+  // Set automatically once the attempt passes the violation threshold.
+  flagged        Boolean   @default(false)
 
   submissions Submission[]
   violations  Violation[]

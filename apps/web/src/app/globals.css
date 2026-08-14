@@ -154,6 +154,92 @@
   }
 }
 
+/*
+  Visualiser motion. CSS only — the drawer slides on a transform, the trigger
+  pulses while unseen, and changed inspector rows flash amber.
+*/
+@keyframes viz-slide-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes viz-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 #a78bfa00;
+    border-color: var(--color-line-strong);
+  }
+  50% {
+    box-shadow: 0 0 0 4px #a78bfa1f;
+    border-color: #a78bfa66;
+  }
+}
+
+@keyframes viz-flash {
+  from {
+    background-color: #fbbf2426;
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+.viz-drawer {
+  transform: translateX(100%);
+  transition: transform 320ms var(--ease-instrument);
+  will-change: transform;
+}
+
+.viz-drawer-open {
+  transform: translateX(0);
+  animation: viz-slide-in 320ms var(--ease-instrument);
+}
+
+.viz-pulse {
+  animation: viz-pulse 2s ease-in-out infinite;
+}
+
+.viz-flash {
+  animation: viz-flash 600ms ease-out;
+}
+
+/* Scrubber, matched to the level meter rather than the browser default. */
+.viz-scrubber {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--color-ink-sunken);
+  border: 1px solid var(--color-line);
+  cursor: pointer;
+}
+.viz-scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 12px;
+  width: 12px;
+  border-radius: 999px;
+  background: var(--color-violet-lit);
+  border: none;
+  cursor: pointer;
+}
+.viz-scrubber::-moz-range-thumb {
+  height: 12px;
+  width: 12px;
+  border-radius: 999px;
+  background: var(--color-violet-lit);
+  border: none;
+  cursor: pointer;
+}
+.viz-scrubber:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* Markdown rendered inside problem statements. */
 .prose-lab {
   color: var(--color-paper);

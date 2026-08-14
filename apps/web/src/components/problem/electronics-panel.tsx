@@ -6,6 +6,9 @@ import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { CircuitView, type ProbeState } from '@/components/visualizer/circuit/circuit-view';
+import { buildSchematic } from '@/components/visualizer/circuit/templates';
+import { WaveformView } from '@/components/visualizer/circuit/waveform-view';
 import { api } from '@/lib/api';
 import type { ElectronicsQuestion, ElectronicsResult } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -16,10 +19,12 @@ import { cn } from '@/lib/utils';
  */
 export function ElectronicsPanel({
   problemId,
+  category,
   questions,
   params,
 }: {
   problemId: string;
+  category: string;
   questions: ElectronicsQuestion[];
   params: Record<string, unknown> | null;
 }) {
@@ -28,6 +33,13 @@ export function ElectronicsPanel({
   const [busy, setBusy] = useState(false);
 
   const outcomeFor = (id: string) => result?.results.find((row) => row.questionId === id);
+
+  // Once answers are checked, the matching probe point on the schematic glows.
+  const probes: ProbeState = Object.fromEntries(
+    (result?.results ?? []).map((row) => [row.questionId, row.correct ? 'correct' : 'wrong']),
+  );
+
+  const schematic = buildSchematic(category, params);
 
   async function submit() {
     setBusy(true);
@@ -52,7 +64,27 @@ export function ElectronicsPanel({
 
   return (
     <div className="space-y-4">
-      {params && Object.keys(params).length > 0 ? (
+      {schematic ? (
+        <div className="glass overflow-hidden">
+          <div className="px-4 pt-4">
+            <span className="instrument">Circuit</span>
+            <div className="hairline mt-1.5 w-10" />
+          </div>
+
+          <CircuitView
+            category={category}
+            params={params}
+            probes={probes}
+            className="mt-2 h-[260px] w-full sm:h-[300px]"
+          />
+
+          <p className="border-t border-line px-4 py-2 font-mono text-[10px] text-faint">
+            Click a component for its value. Probe points turn green once the matching answer is
+            within tolerance.
+          </p>
+        </div>
+      ) : params && Object.keys(params).length > 0 ? (
+        // No layout matches this circuit, so fall back to the raw values.
         <div className="glass p-4">
           <span className="instrument">Circuit parameters</span>
           <div className="hairline mt-1.5 w-10" />
@@ -64,6 +96,19 @@ export function ElectronicsPanel({
               </div>
             ))}
           </dl>
+        </div>
+      ) : null}
+
+      {schematic?.waveform ? (
+        <div className="glass overflow-hidden">
+          <div className="flex items-center justify-between px-4 pt-4">
+            <div>
+              <span className="instrument">Response</span>
+              <div className="hairline mt-1.5 w-10" />
+            </div>
+            <span className="font-mono text-[10px] text-faint">simulated from the values above</span>
+          </div>
+          <WaveformView kind={schematic.waveform} params={params} className="mt-2 block h-[150px] w-full" />
         </div>
       ) : null}
 

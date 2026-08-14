@@ -3,7 +3,7 @@
 import { ArrowLeft, Play, RotateCcw, Send, Sparkles, Terminal, TestTube2 } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { DiscussionThread } from '@/components/discussion/DiscussionThread';
@@ -16,6 +16,10 @@ import { ConsoleOutput, TestResults } from '@/components/problem/results-panel';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { resolveVisualizer } from '@/components/visualizer/resolve';
+import type { TraceResult } from '@/components/visualizer/types';
+import { VizDrawer } from '@/components/visualizer/viz-drawer';
+import { VizTrigger } from '@/components/visualizer/viz-trigger';
 import { api } from '@/lib/api';
 import type {
   EvaluationResult,
@@ -56,6 +60,14 @@ export default function ProblemSolverPage() {
   const [split, setSplit] = useState(44);
   const dragging = useRef(false);
 
+  // Visualiser: a trace is fetched alongside Run, then replayed in the drawer.
+  const [vizOpen, setVizOpen] = useState(false);
+  const [vizSeen, setVizSeen] = useState(false);
+  const [trace, setTrace] = useState<TraceResult | null>(null);
+  const [tracing, setTracing] = useState(false);
+  const [traceError, setTraceError] = useState<string | null>(null);
+  const plan = useMemo(() => (problem ? resolveVisualizer(problem) : null), [problem]);
+
   useEffect(() => {
     let alive = true;
     void api
@@ -86,10 +98,38 @@ export default function ProblemSolverPage() {
     return () => clearTimeout(timer);
   }, [code, problem, language]);
 
+  /**
+   * Traces the solution against the first visible test case so the drawer has
+   * something to replay. Runs alongside Run and never blocks it — a trace
+   * failing is not a reason for Run to look broken.
+   */
+  const refreshTrace = useCallback(async () => {
+    if (!problem || problem.type !== 'PROGRAMMING' || !plan) return;
+    setTracing(true);
+    setTraceError(null);
+    try {
+      setTrace(
+        await api.post<TraceResult>('/execute/trace', {
+          problemId: problem.id,
+          code,
+          lang: language,
+        }),
+      );
+    } catch (error) {
+      // Surfaced in the drawer rather than swallowed — a silent failure here
+      // looks exactly like a broken visualiser.
+      setTrace(null);
+      setTraceError(error instanceof Error ? error.message : 'Could not trace this run');
+    } finally {
+      setTracing(false);
+    }
+  }, [problem, plan, code, language]);
+
   const run = useCallback(async () => {
     if (!problem) return;
     setRunning(true);
     setTab('console');
+    void refreshTrace();
     try {
       const result = await api.post<RunResult>('/execute/run', { code, lang: language });
       setRunResult(result);
@@ -98,7 +138,7 @@ export default function ProblemSolverPage() {
     } finally {
       setRunning(false);
     }
-  }, [problem, code, language]);
+  }, [problem, code, language, refreshTrace]);
 
   const submit = useCallback(async () => {
     if (!problem) return;
@@ -212,6 +252,7 @@ export default function ProblemSolverPage() {
             <div className="overflow-y-auto p-5 sm:p-6">
               <ElectronicsPanel
                 problemId={problem.id}
+                category={problem.category}
                 questions={problem.questions ?? []}
                 params={problem.params}
               />
@@ -248,6 +289,17 @@ export default function ProblemSolverPage() {
                   <span className="hidden font-mono text-[10px] text-faint xl:inline">
                     ⌘/Ctrl ↵ run · ⇧ ⌘/Ctrl ↵ submit
                   </span>
+                  {plan ? (
+                    <VizTrigger
+                      active={vizOpen}
+                      pulse={!vizSeen}
+                      onClick={() => {
+                        setVizOpen((value) => !value);
+                        setVizSeen(true);
+                        if (!trace && !tracing) void refreshTrace();
+                      }}
+                    />
+                  ) : null}
                   <Button variant="outline" size="sm" onClick={() => void run()} loading={running}>
                     <Play className="h-3.5 w-3.5" />
                     Run
@@ -313,6 +365,18 @@ export default function ProblemSolverPage() {
           )}
         </section>
       </div>
+
+      {plan ? (
+        <VizDrawer
+          open={vizOpen}
+          onClose={() => setVizOpen(false)}
+          problem={problem}
+          plan={plan}
+          trace={trace}
+          loading={tracing}
+          error={traceError}
+        />
+      ) : null}
     </PageTransition>
   );
 }

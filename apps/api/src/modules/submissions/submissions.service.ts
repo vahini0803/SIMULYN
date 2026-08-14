@@ -16,7 +16,7 @@ import {
 import { orderByFrom, paginated, type PaginatedResult } from '../../common/dto/pagination.dto';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ExecutionService } from '../execution/execution.service';
+import { ExecutionService, HIDDEN_ERROR_NOTICE } from '../execution/execution.service';
 import { GamificationService, type AwardResult } from '../gamification/gamification.service';
 import { CreateSubmissionDto, QuerySubmissionsDto } from './dto/create-submission.dto';
 
@@ -398,10 +398,21 @@ export class SubmissionsService {
     forStudent: boolean,
     extra: Record<string, unknown> = {},
   ): SubmissionResponse {
+    // Same rule as the live evaluation: a hidden case reveals nothing but its
+    // verdict, or a student can read it back out of stdout, stderr or the exit
+    // code. Stored results go through this too, not just fresh ones.
     const visible = forStudent
       ? testResults.map((r) =>
           r.isHidden
-            ? { ...r, input: 'hidden', expected: 'hidden', actual: r.actual === null ? null : 'hidden' }
+            ? {
+                ...r,
+                input: 'hidden',
+                expected: 'hidden',
+                actual: r.actual === null ? null : 'hidden',
+                stdout: null,
+                stderr: r.stderr ? HIDDEN_ERROR_NOTICE : null,
+                exitCode: null,
+              }
             : r,
         )
       : testResults;

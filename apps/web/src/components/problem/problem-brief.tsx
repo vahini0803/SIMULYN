@@ -12,9 +12,16 @@ import type { Problem } from '@/lib/types';
  * The problem statement. Hints stay locked behind an explicit click and reveal
  * one level at a time, so a student cannot skim to the answer by accident.
  */
-export function ProblemBrief({ problem }: { problem: Problem }) {
+export function ProblemBrief({
+  problem,
+  hideHints,
+}: {
+  problem: Problem;
+  /** Exams pass this: the hints section is not rendered at all. */
+  hideHints?: boolean;
+}) {
   const [revealed, setRevealed] = useState(0);
-  const hints = problem.hints ?? [];
+  const hints = hideHints ? [] : (problem.hints ?? []);
 
   return (
     <div className="space-y-6">

@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
+  Flag,
   Maximize,
   Play,
   Send,
@@ -26,7 +27,8 @@ import { Select } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Panel } from '@/components/ui/panel';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useProctoring } from '@/hooks/useProctoring';
+import { useLockdown } from '@/components/layout/lockdown';
+import { useProctoring, FLAG_THRESHOLD } from '@/hooks/useProctoring';
 import { api } from '@/lib/api';
 import type {
   EvaluationResult,
@@ -72,8 +74,14 @@ export default function StudentExamPage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [finished, setFinished] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const [fullscreen, setFullscreen] = useState(true);
 
   const submitLock = useRef(false);
+  const flaggedNotified = useRef(false);
+  const { setLocked } = useLockdown();
+
+  /** True from the moment the paper opens until it is submitted. */
+  const inProgress = Boolean(attempt) && !finished;
 
   const questions = attempt?.questions ?? [];
   const current = questions[index];
@@ -89,6 +97,22 @@ export default function StudentExamPage() {
         router.push('/student/exams');
       });
   }, [examId, router]);
+
+  /**
+   * Fullscreen is requested, not required: some browsers refuse a programmatic
+   * request outside a trusted gesture, and failing that is not a reason to stop
+   * a student sitting their exam. The banner and the FULLSCREEN violation carry
+   * the enforcement instead.
+   */
+  const goFullscreen = useCallback(async (announce: boolean) => {
+    try {
+      await document.documentElement.requestFullscreen?.();
+      setFullscreen(true);
+    } catch {
+      setFullscreen(false);
+      if (announce) toast.warning('Please allow fullscreen for proctored exams');
+    }
+  }, []);
 
   const startExam = useCallback(async () => {
     setStarting(true);
@@ -154,11 +178,49 @@ export default function StudentExamPage() {
     if (secondsLeft === 0 && attempt && !finished) void submitExam(true);
   }, [secondsLeft, attempt, finished, submitExam]);
 
+  // ── lockdown ──────────────────────────────────────────────────────
+  // Hides the shell's navigation for as long as the paper is open.
+  useEffect(() => {
+    setLocked(inProgress);
+    return () => setLocked(false);
+  }, [inProgress, setLocked]);
+
+  // Keep the banner in step with the actual fullscreen state.
+  useEffect(() => {
+    if (!inProgress) return;
+    const sync = () => setFullscreen(Boolean(document.fullscreenElement));
+    sync();
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, [inProgress]);
+
+  /**
+   * Back-button interception. A history entry is pushed when the paper opens,
+   * so the first Back lands on it rather than leaving the exam; the entry is
+   * then pushed again to stay ahead of another press.
+   */
+  useEffect(() => {
+    if (!inProgress) return;
+
+    window.history.pushState({ simulynExam: examId }, '');
+    const onPopState = () => {
+      window.history.pushState({ simulynExam: examId }, '');
+      toast.warning('You cannot leave an exam in progress', {
+        description: 'Submit the exam to return to the rest of the workspace.',
+      });
+    };
+
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [inProgress, examId]);
+
   // ── proctoring ────────────────────────────────────────────────────
   const proctoring = useProctoring({
     examId,
     attemptId: attempt?.attemptId ?? null,
-    enabled: Boolean(attempt) && !finished,
+    enabled: inProgress,
+    // Blocks copy, cut and paste outright rather than only logging them.
+    blockClipboard: true,
     getSnapshot: () => (current ? (answers[current.problem.id]?.code ?? '') : ''),
     getCurrentQuestion: () => index,
     getTimeRemaining: () => secondsLeft ?? 0,
@@ -169,6 +231,16 @@ export default function StudentExamPage() {
     if (!proctoring.lastAlert) return;
     toast.warning(proctoring.lastAlert.message, { description: 'Recorded by the proctor.' });
   }, [proctoring.lastAlert]);
+
+  // Told once, when the tenth violation lands.
+  useEffect(() => {
+    if (proctoring.violationCount < FLAG_THRESHOLD || flaggedNotified.current) return;
+    flaggedNotified.current = true;
+    toast.error('You have been flagged for excessive violations.', {
+      description: 'Your instructor has been notified.',
+      duration: 10_000,
+    });
+  }, [proctoring.violationCount]);
 
   // ── answering ─────────────────────────────────────────────────────
   function patchAnswer(problemId: string, patch: Partial<AnswerState>) {
@@ -289,8 +361,8 @@ export default function StudentExamPage() {
                 size="lg"
                 className="mt-5 w-full"
                 loading={starting}
-                onClick={() => {
-                  void document.documentElement.requestFullscreen?.().catch(() => undefined);
+                onClick={async () => {
+                  await goFullscreen(true);
                   void startExam();
                 }}
               >
@@ -335,6 +407,19 @@ export default function StudentExamPage() {
 
   return (
     <div className="flex h-dvh flex-col">
+      {!fullscreen ? (
+        <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-warn/40 bg-warn/[0.12] px-4 py-2.5">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-warn" strokeWidth={1.9} />
+          <span className="flex-1 text-[13px] font-medium text-warn">
+            Return to fullscreen — this is being recorded
+          </span>
+          <Button variant="brass" size="sm" onClick={() => void goFullscreen(false)}>
+            <Maximize className="h-3.5 w-3.5" />
+            Go fullscreen
+          </Button>
+        </div>
+      ) : null}
+
       <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-line bg-ink-raised/60 px-4 py-2.5 backdrop-blur-xl">
         <div className="min-w-0">
           <span className="instrument">Exam in progress</span>
@@ -384,10 +469,20 @@ export default function StudentExamPage() {
 
           {proctoring.violationCount > 0 ? (
             <span
-              className="flex items-center gap-1.5 rounded-md border border-warn/35 bg-warn/12 px-2 py-1 font-mono text-[11px] text-warn"
+              className={cn(
+                'flex items-center gap-1.5 rounded-md border px-2 py-1 font-mono text-[11px]',
+                proctoring.violationCount >= FLAG_THRESHOLD
+                  ? 'border-fault/45 bg-fault/15 text-fault'
+                  : 'border-warn/35 bg-warn/12 text-warn',
+              )}
               title="Violations recorded on this attempt"
             >
-              <AlertTriangle className="h-3.5 w-3.5" />
+              {proctoring.violationCount >= FLAG_THRESHOLD ? (
+                <Flag className="h-3.5 w-3.5" />
+              ) : (
+                <AlertTriangle className="h-3.5 w-3.5" />
+              )}
+              {proctoring.violationCount >= FLAG_THRESHOLD ? 'FLAGGED · ' : ''}
               {proctoring.violationCount} · integrity {proctoring.integrityScore}
             </span>
           ) : null}
@@ -421,7 +516,8 @@ export default function StudentExamPage() {
 
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <section className="min-h-0 shrink-0 overflow-y-auto border-b border-line p-5 lg:w-[42%] lg:border-r lg:border-b-0">
-          {current ? <ProblemBrief problem={current.problem} /> : null}
+          {/* Hints are a learning aid, not an exam aid. */}
+          {current ? <ProblemBrief problem={current.problem} hideHints /> : null}
         </section>
 
         <section className="flex min-h-0 min-w-0 flex-1 flex-col">

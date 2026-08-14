@@ -27,6 +27,20 @@ export class ProctoringController {
   async record(@Body() dto: RecordViolationDto, @CurrentUser() user: AuthenticatedUser) {
     const recorded = await this.proctoring.record(dto, user);
     this.gateway.server?.to(teacherRoom(recorded.examId)).emit('student-violation', recorded);
+
+    if (recorded.justFlagged) {
+      this.gateway.server?.to(teacherRoom(recorded.examId)).emit('student-flagged', {
+        attemptId: recorded.examAttemptId,
+        examId: recorded.examId,
+        userId: recorded.userId,
+        username: recorded.username,
+        displayName: recorded.displayName,
+        violationCount: recorded.violationCount,
+        integrityScore: recorded.integrityScore,
+        at: new Date().toISOString(),
+      });
+    }
+
     return recorded;
   }
 

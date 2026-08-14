@@ -209,10 +209,26 @@ export class ProctoringGateway implements OnGatewayConnection, OnGatewayDisconne
 
       this.server.to(teacherRoom(recorded.examId)).emit('student-violation', recorded);
 
+      // A separate event, emitted once, so the proctor view can raise an alarm
+      // rather than inferring it from a count in the violation feed.
+      if (recorded.justFlagged) {
+        this.server.to(teacherRoom(recorded.examId)).emit('student-flagged', {
+          attemptId: recorded.examAttemptId,
+          examId: recorded.examId,
+          userId: recorded.userId,
+          username: recorded.username,
+          displayName: recorded.displayName,
+          violationCount: recorded.violationCount,
+          integrityScore: recorded.integrityScore,
+          at: new Date().toISOString(),
+        });
+      }
+
       return {
         ok: true,
         integrityScore: recorded.integrityScore,
         violationCount: recorded.violationCount,
+        flagged: recorded.flagged,
       };
     } catch (error) {
       return { ok: false, error: (error as Error).message };

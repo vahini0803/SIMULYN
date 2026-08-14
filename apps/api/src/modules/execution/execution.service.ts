@@ -8,10 +8,18 @@ import { Executor, normaliseJavaSource, type LangKey, type RunOutcome } from './
 import {
   assertValidHarness,
   buildProgram,
+  generateTracedDriver,
   HarnessError,
   RESULT_MARKER,
+  traceFidelity,
   type HarnessSpec,
 } from './harness';
+import {
+  MAX_TRACE_EVENTS,
+  TRACE_MARKER,
+  type TraceEvent,
+  type TraceResult,
+} from './trace.types';
 
 export interface TestOutcome {
   index: number;
@@ -28,12 +36,80 @@ export interface TestOutcome {
   executionMs: number;
 }
 
+/** Shown in place of a hidden case's error, carrying no student content. */
+export const HIDDEN_ERROR_NOTICE = 'Your code raised an error on this hidden case.';
+
+/**
+ * Strips every student-controlled channel from a hidden test case.
+ *
+ * Submissions run against hidden cases too, so anything echoed back is a way to
+ * read them: `print(nums)` leaks the input through stdout, an exception message
+ * leaks it through stderr (a dynamically named exception class defeats even
+ * type-only filtering), and `sys.exit(nums[0])` leaks an integer per case
+ * through the exit code. Only the verdict, the timing and whether it timed out
+ * survive.
+ */
+export function maskHiddenOutcome(outcome: TestOutcome): TestOutcome {
+  return {
+    ...outcome,
+    input: 'hidden',
+    expected: 'hidden',
+    actual: outcome.actual === null ? null : 'hidden',
+    stdout: null,
+    stderr: outcome.stderr ? HIDDEN_ERROR_NOTICE : null,
+    exitCode: null,
+  };
+}
+
 /**
  * Splits the driver's return value from whatever the student printed.
  *
  * Without this a stray `print()` inside an otherwise correct solution would
  * land in stdout ahead of the result and fail every case.
  */
+/**
+ * Pulls trace lines out of stdout, leaving the student's own printing behind.
+ *
+ * The marker can appear mid-line when their last print had no trailing
+ * newline, so each line is split at the marker rather than merely tested with
+ * startsWith.
+ */
+export function extractTraceEvents(raw: string): {
+  events: TraceEvent[];
+  truncated: boolean;
+  remainder: string;
+} {
+  if (!raw.includes(TRACE_MARKER)) {
+    return { events: [], truncated: false, remainder: raw };
+  }
+
+  const events: TraceEvent[] = [];
+  const kept: string[] = [];
+
+  for (const line of raw.split('\n')) {
+    const at = line.indexOf(TRACE_MARKER);
+    if (at === -1) {
+      kept.push(line);
+      continue;
+    }
+
+    if (at > 0) kept.push(line.slice(0, at));
+
+    try {
+      const event = JSON.parse(line.slice(at + TRACE_MARKER.length)) as TraceEvent;
+      if (events.length < MAX_TRACE_EVENTS) events.push(event);
+    } catch {
+      // A partially flushed line is not worth failing the whole run over.
+    }
+  }
+
+  return {
+    events,
+    truncated: events.length >= MAX_TRACE_EVENTS,
+    remainder: kept.join('\n'),
+  };
+}
+
 export function splitDriverOutput(raw: string): { actual: string; studentOutput: string } {
   // lastIndexOf: the driver writes its marker last, so a student echoing the
   // same string earlier cannot hijack the parse.
@@ -211,25 +287,98 @@ export class ExecutionService implements OnModuleInit {
     }
   }
 
-  /** Hides the input/expected of hidden cases before returning them to a student. */
+  /** Hides everything about a hidden case except whether it passed. */
   maskHidden(result: EvaluationResult): EvaluationResult {
     return {
       ...result,
-      results: result.results.map((r) =>
-        r.isHidden
-          ? {
-              ...r,
-              input: 'hidden',
-              expected: 'hidden',
-              actual: r.actual === null ? null : 'hidden',
-              // Their own prints stay visible — it is their code, and it is
-              // often the only clue to why a hidden case failed.
-              stdout: r.stdout,
-              stderr: r.stderr,
-            }
-          : r,
-      ),
+      results: result.results.map((r) => (r.isHidden ? maskHiddenOutcome(r) : r)),
     };
+  }
+
+  // ── traced run ─────────────────────────────────────────────────────
+
+  /**
+   * Runs one test case through a driver that narrates itself, so the
+   * visualiser can replay what the student's code actually did.
+   *
+   * Only a visible test case can be traced — replaying a hidden one would
+   * hand over its input a step at a time.
+   */
+  async runWithTrace(
+    problemId: string,
+    code: string,
+    lang: LangKey,
+    testCaseIndex = 0,
+  ): Promise<TraceResult> {
+    const problem = await this.prisma.problem.findUnique({
+      where: { id: problemId },
+      include: { testCases: { orderBy: { order: 'asc' } } },
+    });
+    if (!problem) throw new NotFoundException(`Problem ${problemId} not found`);
+    if (problem.type !== 'PROGRAMMING') {
+      throw new BadRequestException('Only programming problems can be traced');
+    }
+
+    const visible = problem.testCases.filter((testCase) => !testCase.isHidden);
+    if (visible.length === 0) {
+      throw new BadRequestException('This problem has no visible test case to trace');
+    }
+    const testCase = visible[Math.min(Math.max(testCaseIndex, 0), visible.length - 1)];
+
+    let spec: HarnessSpec;
+    try {
+      const parsed = parseJsonOrNull<HarnessSpec>(problem.harness);
+      assertValidHarness(parsed);
+      spec = parsed;
+    } catch (error) {
+      throw new BadRequestException(
+        error instanceof HarnessError ? error.message : 'This problem has an invalid harness',
+      );
+    }
+
+    const program = generateTracedDriver(lang, code, spec, testCase.input);
+    const prepared = await this.executor.prepare(lang, program, { timeoutMs: this.timeoutMs });
+
+    try {
+      if (prepared.compileError) {
+        return {
+          ok: false,
+          truncated: false,
+          events: [],
+          stdout: '',
+          stderr: '',
+          exitCode: null,
+          timedOut: false,
+          compileError: prepared.compileError,
+          executionMs: 0,
+          fidelity: traceFidelity(lang),
+        };
+      }
+
+      // A traced run emits far more output than a plain one.
+      const run = await prepared.run('', {
+        timeoutMs: this.timeoutMs,
+        maxOutputBytes: 4 * 1024 * 1024,
+      });
+
+      const { events, truncated, remainder } = extractTraceEvents(run.stdout);
+      const { studentOutput } = splitDriverOutput(remainder);
+
+      return {
+        ok: !run.timedOut && run.exitCode === 0,
+        truncated,
+        events,
+        stdout: studentOutput,
+        stderr: run.stderr.trim(),
+        exitCode: run.exitCode,
+        timedOut: run.timedOut,
+        compileError: null,
+        executionMs: run.executionMs,
+        fidelity: traceFidelity(lang),
+      };
+    } finally {
+      await prepared.dispose();
+    }
   }
 
   // ── electronics ────────────────────────────────────────────────────
