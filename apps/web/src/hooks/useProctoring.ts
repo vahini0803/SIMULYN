@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { FLAG_THRESHOLD } from '@simulyn/shared';
+
 import { detectExtendedDisplay } from '@/lib/display';
 import { createProctoringSocket, type Socket } from '@/lib/socket';
 import type { ViolationTypeKey } from '@/lib/types';
@@ -13,9 +15,19 @@ const HEARTBEAT_MS = 5000;
 const DEVTOOLS_GAP = 170;
 /** How often the display layout is re-checked on browsers without an event. */
 const DISPLAY_POLL_MS = 15_000;
+/** How many recent in-exam copies stay pasteable. */
+const CLIPBOARD_HISTORY = 25;
 
-/** Violations at or above this count flag the attempt for the instructor. */
-export const FLAG_THRESHOLD = 10;
+export { FLAG_THRESHOLD };
+
+export interface TerminationNotice {
+  attemptId: string;
+  reason: string;
+  /** Proctor's username, or null when the violation threshold did it. */
+  by: string | null;
+  violationCount: number;
+  at: string;
+}
 
 export interface ProctoringState {
   connected: boolean;
@@ -30,16 +42,19 @@ export interface ProctoringOptions {
   /** Pauses every detector — used before the paper opens and after submit. */
   enabled: boolean;
   /**
-   * Blocks copy, cut and paste outright instead of only recording them. Set
-   * during an exam; a student practising should still be able to use their
-   * clipboard.
+   * Restricts pasting to content copied from inside the exam itself, so a
+   * student can lift a test case out of the problem brief but cannot paste a
+   * solution in from another window. Off outside an exam, where the clipboard
+   * is nobody's business.
    */
-  blockClipboard?: boolean;
+  restrictClipboard?: boolean;
   /** Current editor contents, captured with each violation. */
   getSnapshot?: () => string;
   getCurrentQuestion?: () => number;
   getTimeRemaining?: () => number;
   onExamEnded?: () => void;
+  /** The student has been removed from the exam. */
+  onTerminated?: (notice: TerminationNotice) => void;
 }
 
 /**
@@ -54,11 +69,12 @@ export function useProctoring({
   examId,
   attemptId,
   enabled,
-  blockClipboard = false,
+  restrictClipboard = false,
   getSnapshot,
   getCurrentQuestion,
   getTimeRemaining,
   onExamEnded,
+  onTerminated,
 }: ProctoringOptions): ProctoringState {
   const [connected, setConnected] = useState(false);
   const [violationCount, setViolationCount] = useState(0);
@@ -67,6 +83,11 @@ export function useProctoring({
 
   const socketRef = useRef<Socket | null>(null);
   const lastByType = useRef<Map<string, number>>(new Map());
+  /**
+   * Text copied from inside the exam this session. Insertion-ordered, so the
+   * oldest entry is the one evicted once it is full. Never leaves the page.
+   */
+  const internalClips = useRef<Set<string>>(new Set());
   /** Last known extended-display state, so we report transitions not ticks. */
   const extendedDisplay = useRef(false);
   const attemptRef = useRef(attemptId);
@@ -118,12 +139,18 @@ export function useProctoring({
     socket.on('disconnect', () => setConnected(false));
     socket.on('exam-ended', () => onExamEnded?.());
 
+    // Only ever delivered to this student's own attempt room.
+    socket.on('student-terminated', (event: TerminationNotice) => {
+      if (event.attemptId !== attemptId) return;
+      onTerminated?.(event);
+    });
+
     return () => {
       socket.removeAllListeners();
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [enabled, attemptId, examId, onExamEnded]);
+  }, [enabled, attemptId, examId, onExamEnded, onTerminated]);
 
   // ── heartbeat ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -146,21 +173,42 @@ export function useProctoring({
     if (!enabled || !attemptId) return;
 
     /**
-     * During an exam the clipboard action is cancelled, not merely logged —
-     * otherwise a student can paste in a whole solution and take the ten-point
-     * hit as the price of doing it.
+     * Copying inside the exam is allowed and never logged — a student lifting a
+     * test case out of the problem brief is doing normal work. What each copy
+     * does is register the text as pasteable, so the paste handler can tell
+     * "moved this from the brief into the editor" from "brought this in from
+     * somewhere else".
      */
-    const clipboard = (event: ClipboardEvent, type: 'COPY' | 'CUT' | 'PASTE', message: string) => {
-      if (blockClipboard) event.preventDefault();
-      report(type, message);
+    const remember = (event: ClipboardEvent) => {
+      if (!restrictClipboard) return;
+      const text =
+        event.clipboardData?.getData('text/plain') || (document.getSelection()?.toString() ?? '');
+      const trimmed = text.trim();
+      if (!trimmed) return;
+
+      internalClips.current.add(trimmed);
+      // Bounded: only the most recent copies stay pasteable.
+      if (internalClips.current.size > CLIPBOARD_HISTORY) {
+        internalClips.current.delete(internalClips.current.values().next().value as string);
+      }
     };
 
-    const onCopy = (event: ClipboardEvent) =>
-      clipboard(event, 'COPY', 'Copying is disabled during the exam.');
-    const onCut = (event: ClipboardEvent) =>
-      clipboard(event, 'CUT', 'Cutting is disabled during the exam.');
-    const onPaste = (event: ClipboardEvent) =>
-      clipboard(event, 'PASTE', 'Pasting is disabled during the exam.');
+    /**
+     * A paste of something copied inside the exam goes through untouched. A
+     * paste of anything else is cancelled and recorded — otherwise a student can
+     * paste in a whole solution and take the ten-point hit as the price.
+     */
+    const onPaste = (event: ClipboardEvent) => {
+      if (!restrictClipboard) return;
+
+      const pasted = (event.clipboardData?.getData('text/plain') ?? '').trim();
+      // Nothing to police: an empty or non-text paste changes no code.
+      if (!pasted) return;
+      if (internalClips.current.has(pasted)) return;
+
+      event.preventDefault();
+      report('PASTE', 'Only content copied from inside this exam can be pasted.');
+    };
     const onContextMenu = (event: MouseEvent) => {
       event.preventDefault();
       report('RIGHTCLICK', 'The context menu is disabled during the exam.');
@@ -213,8 +261,8 @@ export function useProctoring({
       }
     };
 
-    document.addEventListener('copy', onCopy);
-    document.addEventListener('cut', onCut);
+    document.addEventListener('copy', remember);
+    document.addEventListener('cut', remember);
     document.addEventListener('paste', onPaste);
     document.addEventListener('contextmenu', onContextMenu);
     document.addEventListener('visibilitychange', onVisibility);
@@ -250,8 +298,8 @@ export function useProctoring({
     return () => {
       clearInterval(displayTimer);
       screenTarget.removeEventListener?.('change', checkDisplays);
-      document.removeEventListener('copy', onCopy);
-      document.removeEventListener('cut', onCut);
+      document.removeEventListener('copy', remember);
+      document.removeEventListener('cut', remember);
       document.removeEventListener('paste', onPaste);
       document.removeEventListener('contextmenu', onContextMenu);
       document.removeEventListener('visibilitychange', onVisibility);
@@ -261,7 +309,7 @@ export function useProctoring({
       window.removeEventListener('beforeunload', onBeforeUnload);
       window.removeEventListener('resize', onResize);
     };
-  }, [enabled, attemptId, report, blockClipboard]);
+  }, [enabled, attemptId, report, restrictClipboard]);
 
   return { connected, violationCount, integrityScore, lastAlert };
 }

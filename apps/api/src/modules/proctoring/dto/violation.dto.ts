@@ -45,6 +45,14 @@ export class FlagAttemptDto {
   note!: string;
 }
 
+export class TerminateAttemptDto {
+  @ApiProperty({ description: 'Why the student is being removed — shown to them and logged' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(2000)
+  reason!: string;
+}
+
 export class QueryViolationsDto {
   @ApiPropertyOptional()
   @IsString()

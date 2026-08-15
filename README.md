@@ -8,7 +8,8 @@ in real time.
   cases, answer tolerance-checked electronics questions, ask a Socratic AI mentor for
   hints, and earn XP, levels, streaks and badges.
 - **Teachers** author problems, assign them to classes, schedule exams, and invigilate
-  live — violations stream in as they happen with a per-student integrity score.
+  live — violations stream in as they happen with a per-student integrity score, and a
+  proctor can remove a student from an exam or readmit one.
 - **Admins** manage accounts, bulk-import a cohort from CSV, and watch system health.
 
 ---
@@ -126,6 +127,27 @@ code-length limit.
 > in its container (below), which is what the resource limits in
 > `docker-compose.prod.yml` are for.
 
+### Proctoring rules
+
+**The clipboard is scoped to the exam, not disabled.** Copying inside the paper is free
+and never logged — lifting a test case out of the problem brief into the editor is normal
+work. Every in-exam copy registers its text as pasteable; a paste whose contents were not
+copied inside the exam is cancelled and recorded as a `PASTE` violation. The comparison
+lives entirely in the browser (`useProctoring.ts`), holds the last 25 copies, and nothing
+from the clipboard is ever sent to the server.
+
+**Ten violations remove the student from the exam.** `FLAG_THRESHOLD` in
+`packages/shared/src/constants/violation-types.ts` is the single source of truth for both
+the API and the web app. Crossing it scores and closes the attempt, sets `terminated`, and
+pushes `student-terminated` to that student's own socket room and the proctor room. The
+student cannot restart, submit, or record further violations.
+
+A proctor can do the same deliberately from the live board with a stated reason, and can
+readmit anyone they removed. Readmission reopens the attempt against its **original**
+deadline — no extra time — and re-bases the threshold via `violationBaseline`, so past
+violations stay on record but stop counting towards another removal. Both actions are
+written onto the attempt's timeline as `MANUAL` entries.
+
 ---
 
 ## Commands
@@ -140,8 +162,9 @@ pnpm db:seed                # wipe and repopulate demo data
 pnpm db:studio              # browse the database
 
 pnpm --filter web test      # frontend unit tests
-pnpm --filter api test:smoke    # 96 API checks — needs a running server
-pnpm --filter api test:phase5   # 59 teaching/exam/proctoring checks
+pnpm --filter api test:smoke        # 96 API checks — needs a running server
+pnpm --filter api test:phase5       # 59 teaching/exam/proctoring checks
+pnpm --filter api test:termination  # 30 exam-removal and readmission checks
 ```
 
 The API smoke suites mutate data. Re-run `pnpm db:seed` afterwards.

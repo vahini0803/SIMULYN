@@ -173,14 +173,18 @@ try {
   check('teacher room receives student-flagged', false, error.message);
 }
 
+// The tipping violation also removes the student, so there is no eleventh from
+// them to record — see test/termination.mjs for the full removal contract.
 const eleventh = await req('POST', '/proctoring/violations', {
   token: sunan.token,
   body: { examAttemptId: attemptId, typeKey: 'RIGHTCLICK' },
 });
-check('justFlagged is not repeated after the first time', eleventh.body.flagged === true && eleventh.body.justFlagged === false);
+check('a removed student cannot record another violation', eleventh.status === 400, `got ${eleventh.status}`);
 
 const board = await req('GET', `/proctoring/exams/${examId}/live`, { token: teacher.token });
-check('live board exposes flagged', board.body.find((r) => r.attemptId === attemptId)?.flagged === true);
+const flaggedRow = board.body.find((r) => r.attemptId === attemptId);
+check('live board exposes flagged', flaggedRow?.flagged === true);
+check('live board exposes the removal', flaggedRow?.terminated === true);
 
 const results = await req('GET', `/exams/${examId}/results`, { token: teacher.token });
 check('results table exposes flagged', results.body.attempts.find((a) => a.user.username === 'sunan')?.flagged === true);

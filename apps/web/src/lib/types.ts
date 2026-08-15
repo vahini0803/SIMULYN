@@ -250,6 +250,9 @@ export interface ExamSummary {
     autoSubmitted: boolean;
     totalScore: number;
     integrityScore: number;
+    /** Only present on the single-exam detail response. */
+    terminated?: boolean;
+    terminatedReason?: string | null;
     endsAt: string;
   } | null;
 }
@@ -414,7 +417,33 @@ export interface RecordedViolation {
   timeRemaining: number | null;
   integrityScore: number;
   violationCount: number;
+  terminated: boolean;
   createdAt: string;
+}
+
+export interface StudentTerminatedEvent {
+  attemptId: string;
+  examId: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  reason: string;
+  /** Proctor's username, or null when the violation threshold did it. */
+  by: string | null;
+  violationCount: number;
+  integrityScore: number;
+  totalScore: number;
+  at: string;
+}
+
+export interface StudentReadmittedEvent {
+  attemptId: string;
+  examId: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  by: string;
+  at: string;
 }
 
 export interface StudentFlaggedEvent {
@@ -435,7 +464,12 @@ export interface LiveAttemptRow {
   submittedAt: string | null;
   integrityScore: number;
   flagged: boolean;
+  terminated: boolean;
+  terminatedReason: string | null;
+  terminatedBy: string | null;
   violationCount: number;
+  /** Violations counted since the last readmit — what the threshold measures. */
+  violationsSinceReadmit: number;
   submissionCount: number;
   recentViolations: { typeKey: ViolationTypeKey; weight: number; createdAt: string }[];
 }

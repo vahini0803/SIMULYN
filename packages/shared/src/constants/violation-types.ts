@@ -52,8 +52,8 @@ export const VIOLATION_TYPES: Record<ViolationTypeKey, ViolationTypeDefinition> 
     key: 'PASTE',
     label: 'Paste',
     weight: 10,
-    alert: 'Pasting is disabled during the exam. This action has been logged.',
-    teacherAlert: '{name} pasted content into the editor',
+    alert: 'Only content copied from inside this exam can be pasted. This has been logged.',
+    teacherAlert: '{name} tried to paste content from outside the exam',
     severity: 'high',
     critical: true,
   },
@@ -172,6 +172,13 @@ export const VIOLATION_TYPE_LIST: ViolationTypeDefinition[] = VIOLATION_TYPE_KEY
 );
 
 export const INITIAL_INTEGRITY_SCORE = 100;
+
+/**
+ * Violations at or above this count flag the attempt and remove the student
+ * from the exam. Counted from the attempt's `violationBaseline`, so a student a
+ * proctor readmits starts again from zero rather than being ejected instantly.
+ */
+export const FLAG_THRESHOLD = 10;
 
 /** Integrity score bands used for the color-coded proctor cards. */
 export const INTEGRITY_BANDS = {

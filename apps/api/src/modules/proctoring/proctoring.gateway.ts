@@ -18,7 +18,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { examDeadline } from '../submissions/submissions.service';
 import { RecordViolationDto } from './dto/violation.dto';
-import { ProctoringService } from './proctoring.service';
+import { ProctoringService, type TerminationResult } from './proctoring.service';
 
 interface SocketData {
   user?: AuthenticatedUser;
@@ -37,6 +37,8 @@ type ProctorSocket = Socket & { data: SocketData };
 
 export const examRoom = (examId: string) => `exam:${examId}`;
 export const teacherRoom = (examId: string) => `teacher:${examId}`;
+/** One room per attempt, so a message can reach a single student. */
+export const attemptRoom = (attemptId: string) => `attempt:${attemptId}`;
 
 /**
  * Real-time proctoring channel.
@@ -167,6 +169,7 @@ export class ProctoringGateway implements OnGatewayConnection, OnGatewayDisconne
       client.data.attemptId = attempt?.id;
 
       await client.join(examRoom(body.examId));
+      if (attempt) await client.join(attemptRoom(attempt.id));
 
       this.server.to(teacherRoom(body.examId)).emit('student-joined', {
         userId: user.id,
@@ -222,6 +225,21 @@ export class ProctoringGateway implements OnGatewayConnection, OnGatewayDisconne
           integrityScore: recorded.integrityScore,
           at: new Date().toISOString(),
         });
+
+        // Crossing the threshold ends the attempt — tell the student too.
+        this.announceTerminated({
+          attemptId: recorded.examAttemptId,
+          examId: recorded.examId,
+          userId: recorded.userId,
+          username: recorded.username,
+          displayName: recorded.displayName,
+          reason: `Automatically removed after ${recorded.violationCount} violations`,
+          by: null,
+          violationCount: recorded.violationCount,
+          integrityScore: recorded.integrityScore,
+          totalScore: 0,
+          at: new Date(),
+        });
       }
 
       return {
@@ -229,6 +247,7 @@ export class ProctoringGateway implements OnGatewayConnection, OnGatewayDisconne
         integrityScore: recorded.integrityScore,
         violationCount: recorded.violationCount,
         flagged: recorded.flagged,
+        terminated: recorded.terminated,
       };
     } catch (error) {
       return { ok: false, error: (error as Error).message };
@@ -252,6 +271,23 @@ export class ProctoringGateway implements OnGatewayConnection, OnGatewayDisconne
 
     client.data.examId = attempt.examId;
     client.data.attemptId = attempt.id;
+
+    // Backstop for a student who was offline when they were removed: the live
+    // broadcast missed them, so the next heartbeat closes their paper.
+    if (attempt.terminated) {
+      client.emit('student-terminated', {
+        attemptId: attempt.id,
+        examId: attempt.examId,
+        userId: attempt.userId,
+        reason: attempt.terminatedReason ?? 'Removed from the exam',
+        by: attempt.terminatedBy,
+        violationCount: await this.prisma.violation.count({
+          where: { examAttemptId: attempt.id },
+        }),
+        at: (attempt.terminatedAt ?? new Date()).toISOString(),
+      });
+      return { ok: false, error: 'You have been removed from this exam' };
+    }
 
     const endsAt = examDeadline(attempt.startedAt, attempt.exam);
     const expired = Date.now() > endsAt.getTime();
@@ -296,5 +332,35 @@ export class ProctoringGateway implements OnGatewayConnection, OnGatewayDisconne
   /** Broadcast helper used when an exam window closes for everyone. */
   announceExamEnded(examId: string): void {
     this.server?.to(examRoom(examId)).emit('exam-ended', { examId, at: new Date().toISOString() });
+  }
+
+  /**
+   * A student has been removed from the exam. The student's own room closes the
+   * paper on their screen immediately; the teacher room updates the board. It
+   * deliberately does not reach the rest of the cohort.
+   */
+  announceTerminated(result: TerminationResult): void {
+    const payload = { ...result, at: new Date(result.at).toISOString() };
+    this.server
+      ?.to(attemptRoom(result.attemptId))
+      .to(teacherRoom(result.examId))
+      .emit('student-terminated', payload);
+  }
+
+  /** A proctor has let a removed student back in. */
+  announceReadmitted(result: {
+    attemptId: string;
+    examId: string;
+    userId: string;
+    username: string;
+    displayName: string;
+    by: string;
+    at: Date;
+  }): void {
+    const payload = { ...result, at: new Date(result.at).toISOString() };
+    this.server
+      ?.to(attemptRoom(result.attemptId))
+      .to(teacherRoom(result.examId))
+      .emit('student-readmitted', payload);
   }
 }

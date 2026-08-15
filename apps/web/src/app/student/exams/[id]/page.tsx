@@ -28,7 +28,7 @@ import { Modal } from '@/components/ui/modal';
 import { Panel } from '@/components/ui/panel';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useLockdown } from '@/components/layout/lockdown';
-import { useProctoring, FLAG_THRESHOLD } from '@/hooks/useProctoring';
+import { useProctoring, FLAG_THRESHOLD, type TerminationNotice } from '@/hooks/useProctoring';
 import { api } from '@/lib/api';
 import type {
   EvaluationResult,
@@ -73,6 +73,8 @@ export default function StudentExamPage() {
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [finished, setFinished] = useState(false);
+  /** Set when a proctor — or the violation threshold — ends the attempt. */
+  const [removed, setRemoved] = useState<TerminationNotice | null>(null);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [fullscreen, setFullscreen] = useState(true);
 
@@ -80,8 +82,8 @@ export default function StudentExamPage() {
   const flaggedNotified = useRef(false);
   const { setLocked } = useLockdown();
 
-  /** True from the moment the paper opens until it is submitted. */
-  const inProgress = Boolean(attempt) && !finished;
+  /** True from the moment the paper opens until it is submitted or ended. */
+  const inProgress = Boolean(attempt) && !finished && removed === null;
 
   const questions = attempt?.questions ?? [];
   const current = questions[index];
@@ -214,17 +216,28 @@ export default function StudentExamPage() {
     return () => window.removeEventListener('popstate', onPopState);
   }, [inProgress, examId]);
 
+  /**
+   * The attempt is over: it is already scored and closed server-side, so there
+   * is nothing to submit — leave fullscreen and show the student why.
+   */
+  const handleTerminated = useCallback((notice: TerminationNotice) => {
+    submitLock.current = true;
+    setRemoved(notice);
+    void document.exitFullscreen?.().catch(() => undefined);
+  }, []);
+
   // ── proctoring ────────────────────────────────────────────────────
   const proctoring = useProctoring({
     examId,
     attemptId: attempt?.attemptId ?? null,
     enabled: inProgress,
-    // Blocks copy, cut and paste outright rather than only logging them.
-    blockClipboard: true,
+    // Copying inside the paper is fine; pasting from outside it is not.
+    restrictClipboard: true,
     getSnapshot: () => (current ? (answers[current.problem.id]?.code ?? '') : ''),
     getCurrentQuestion: () => index,
     getTimeRemaining: () => secondsLeft ?? 0,
     onExamEnded: () => void submitExam(true),
+    onTerminated: handleTerminated,
   });
 
   useEffect(() => {
@@ -232,13 +245,15 @@ export default function StudentExamPage() {
     toast.warning(proctoring.lastAlert.message, { description: 'Recorded by the proctor.' });
   }, [proctoring.lastAlert]);
 
-  // Told once, when the tenth violation lands.
+  // Warned once, on the approach — removal at the threshold should not be the
+  // first the student hears of it.
   useEffect(() => {
-    if (proctoring.violationCount < FLAG_THRESHOLD || flaggedNotified.current) return;
+    const remaining = FLAG_THRESHOLD - proctoring.violationCount;
+    if (remaining > 3 || remaining <= 0 || flaggedNotified.current) return;
     flaggedNotified.current = true;
-    toast.error('You have been flagged for excessive violations.', {
-      description: 'Your instructor has been notified.',
-      duration: 10_000,
+    toast.error(`${remaining} more violation${remaining === 1 ? '' : 's'} will end your exam.`, {
+      description: 'Your instructor is watching this attempt.',
+      duration: 12_000,
     });
   }, [proctoring.violationCount]);
 
@@ -343,14 +358,32 @@ export default function StudentExamPage() {
                 This exam is proctored
               </div>
               <ul className="mt-2 space-y-1 text-[12.5px] text-muted">
-                <li>· Copying, pasting and right-clicking are disabled and recorded.</li>
-                <li>· Leaving the tab or window is recorded.</li>
+                <li>
+                  · You may copy and paste <em>within</em> the exam — a test case from the brief
+                  into your editor, for instance. Pasting anything from outside is blocked and
+                  recorded.
+                </li>
+                <li>· Right-clicking, and leaving the tab or window, are recorded.</li>
                 <li>· Your integrity score starts at 100 and drops with each violation.</li>
+                <li>
+                  · {FLAG_THRESHOLD} violations remove you from the exam. Only your instructor can
+                  let you back in.
+                </li>
                 <li>· The timer keeps running once you start, even if you close the page.</li>
               </ul>
             </div>
 
-            {exam.attempt?.submittedAt ? (
+            {exam.attempt?.terminated ? (
+              <div className="mt-5 rounded-lg border border-fault/40 bg-fault/[0.08] px-4 py-3">
+                <div className="flex items-center gap-2 text-[13px] font-medium text-fault">
+                  <ShieldAlert className="h-4 w-4" strokeWidth={1.8} />
+                  You were removed from this exam
+                </div>
+                <p className="mt-1.5 text-[12.5px] text-muted">
+                  {exam.attempt.terminatedReason ?? 'Speak to your instructor.'}
+                </p>
+              </div>
+            ) : exam.attempt?.submittedAt ? (
               <div className="mt-5 flex items-center gap-2 rounded-lg border border-trace/30 bg-trace/[0.06] px-4 py-3 text-[13px] text-trace">
                 <CheckCircle2 className="h-4 w-4" strokeWidth={1.8} />
                 You submitted this exam · {exam.attempt.totalScore} points · integrity{' '}
@@ -378,6 +411,31 @@ export default function StudentExamPage() {
             )}
           </Panel>
         )}
+      </div>
+    );
+  }
+
+  // ── removed mid-exam ──────────────────────────────────────────────
+  if (removed) {
+    return (
+      <div className="mx-auto flex min-h-[70dvh] max-w-lg flex-col items-center justify-center px-6 text-center">
+        <div className="flex h-14 w-14 items-center justify-center rounded-xl border border-fault/35 bg-fault/12">
+          <ShieldAlert className="h-6 w-6 text-fault" strokeWidth={1.5} />
+        </div>
+        <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.02em] text-white">
+          You have been removed from this exam
+        </h1>
+        <p className="mt-2 text-sm text-muted">{removed.reason}</p>
+        <p className="mt-4 text-[13px] text-faint">
+          {removed.by
+            ? `Removed by ${removed.by}.`
+            : `Removed automatically after ${removed.violationCount} violations.`}{' '}
+          Your answers up to this point have been saved and scored. Speak to your instructor if you
+          believe this is a mistake — only they can let you back in.
+        </p>
+        <Link href="/student/exams" className="mt-6">
+          <Button variant="outline">Back to exams</Button>
+        </Link>
       </div>
     );
   }

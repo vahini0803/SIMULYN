@@ -290,6 +290,17 @@ model ExamAttempt {
   // Set automatically once the attempt passes the violation threshold.
   flagged        Boolean   @default(false)
 
+  // Removed from the exam — automatically past the violation threshold, or by a
+  // proctor. A terminated attempt cannot be reopened until a proctor readmits.
+  terminated       Boolean   @default(false)
+  terminatedAt     DateTime?
+  terminatedReason String?
+  // Username of the proctor who removed them; null when the threshold did it.
+  terminatedBy     String?
+  // Violations recorded before the last readmit. The flag threshold counts only
+  // what came after, so a readmitted student starts from a clean slate.
+  violationBaseline Int      @default(0)
+
   submissions Submission[]
   violations  Violation[]
 

@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import {
+  FLAG_THRESHOLD,
   INITIAL_INTEGRITY_SCORE,
   Prisma,
   Role,
@@ -10,6 +11,7 @@ import {
 
 import type { AuthenticatedUser } from '../../common/types/authenticated-user';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SubmissionsService } from '../submissions/submissions.service';
 import { QueryViolationsDto, RecordViolationDto } from './dto/violation.dto';
 
 export interface RecordedViolation {
@@ -32,17 +34,36 @@ export interface RecordedViolation {
   flagged: boolean;
   /** Set on the one violation that tipped it over, so the UI can alert once. */
   justFlagged: boolean;
+  /** True once the student has been removed from the exam. */
+  terminated: boolean;
   createdAt: Date;
 }
 
-/** Violations at or above this count flag the attempt for the instructor. */
-export const FLAG_THRESHOLD = 10;
+export interface TerminationResult {
+  attemptId: string;
+  examId: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  reason: string;
+  /** Username of the proctor, or null when the threshold did it. */
+  by: string | null;
+  violationCount: number;
+  integrityScore: number;
+  totalScore: number;
+  at: Date;
+}
+
+export { FLAG_THRESHOLD };
 
 @Injectable()
 export class ProctoringService {
   private readonly logger = new Logger(ProctoringService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly submissions: SubmissionsService,
+  ) {}
 
   /**
    * Records a violation and deducts its weight from the attempt's integrity
@@ -71,6 +92,9 @@ export class ProctoringService {
     if (attempt.submittedAt && actor.role === Role.STUDENT) {
       throw new BadRequestException('This attempt has already been submitted');
     }
+    if (attempt.terminated && actor.role === Role.STUDENT) {
+      throw new BadRequestException('You have been removed from this exam');
+    }
 
     const definition = VIOLATION_TYPES[dto.typeKey as ViolationTypeKey];
     const weight = dto.weight ?? definition?.weight ?? 0;
@@ -96,17 +120,23 @@ export class ProctoringService {
     ]);
 
     // Enough violations flags the attempt outright, independently of the
-    // integrity score — a run of low-weight events still means something.
-    const shouldFlag = count >= FLAG_THRESHOLD;
+    // integrity score — a run of low-weight events still means something. Only
+    // violations since the last readmit count, so a readmitted student is not
+    // ejected again by their own history.
+    const sinceReadmit = count - attempt.violationBaseline;
+    const shouldFlag = sinceReadmit >= FLAG_THRESHOLD;
     const justFlagged = shouldFlag && !attempt.flagged;
 
+    // Crossing the threshold removes the student from the exam. A proctor can
+    // readmit them from the live board.
     if (justFlagged) {
-      await this.prisma.examAttempt.update({
-        where: { id: dto.examAttemptId },
-        data: { flagged: true },
-      });
+      await this.terminateAttempt(
+        attempt.id,
+        `Automatically removed after ${sinceReadmit} violations`,
+        null,
+      );
       this.logger.warn(
-        `${attempt.user.username} FLAGGED after ${count} violations on attempt ${attempt.id}`,
+        `${attempt.user.username} FLAGGED and removed after ${sinceReadmit} violations on attempt ${attempt.id}`,
       );
     }
 
@@ -135,8 +165,168 @@ export class ProctoringService {
       violationCount: count,
       flagged: shouldFlag,
       justFlagged,
+      terminated: attempt.terminated || justFlagged,
       createdAt: violation.createdAt,
     };
+  }
+
+  /**
+   * Closes an attempt and marks it removed. The work done so far is scored and
+   * kept — ejection is a discipline decision, not a reason to destroy evidence
+   * — and `submittedAt` is set so nothing downstream sees a dangling attempt.
+   *
+   * `by` is the proctor's username, or null when the violation threshold fired.
+   */
+  private async terminateAttempt(
+    attemptId: string,
+    reason: string,
+    by: string | null,
+  ): Promise<number> {
+    const totalScore = await this.submissions.recalculateAttemptScore(attemptId);
+
+    await this.prisma.examAttempt.update({
+      where: { id: attemptId },
+      data: {
+        flagged: true,
+        terminated: true,
+        terminatedAt: new Date(),
+        terminatedReason: reason,
+        terminatedBy: by,
+        submittedAt: new Date(),
+        autoSubmitted: true,
+        totalScore,
+      },
+    });
+
+    return totalScore;
+  }
+
+  /** Removes a student from an exam on a proctor's instruction. */
+  async terminate(
+    examAttemptId: string,
+    reason: string,
+    actor: AuthenticatedUser,
+  ): Promise<TerminationResult> {
+    const attempt = await this.loadProctoredAttempt(examAttemptId, actor);
+    if (attempt.terminated) {
+      throw new BadRequestException('This student has already been removed from the exam');
+    }
+
+    // Recorded on the same timeline as the detections, so the eject and its
+    // stated reason are visible in the attempt's history.
+    await this.record(
+      {
+        examAttemptId,
+        typeKey: ViolationType.MANUAL,
+        weight: 0,
+        metadata: JSON.stringify({ note: `Removed from exam: ${reason}`, by: actor.username }),
+      },
+      actor,
+    );
+
+    const totalScore = await this.terminateAttempt(examAttemptId, reason, actor.username);
+    const [violationCount, updated] = await Promise.all([
+      this.prisma.violation.count({ where: { examAttemptId } }),
+      this.prisma.examAttempt.findUniqueOrThrow({ where: { id: examAttemptId } }),
+    ]);
+
+    this.logger.warn(
+      `${actor.username} removed ${attempt.user.username} from exam ${attempt.examId}: ${reason}`,
+    );
+
+    return {
+      attemptId: attempt.id,
+      examId: attempt.examId,
+      userId: attempt.userId,
+      username: attempt.user.username,
+      displayName: attempt.user.displayName,
+      reason,
+      by: actor.username,
+      violationCount,
+      integrityScore: updated.integrityScore,
+      totalScore,
+      at: updated.terminatedAt ?? new Date(),
+    };
+  }
+
+  /**
+   * Lets a removed student back into the exam. Their violations stay on record,
+   * but the flag threshold is re-based to the current count so they are not
+   * ejected again the instant they reconnect.
+   */
+  async readmit(examAttemptId: string, actor: AuthenticatedUser) {
+    const attempt = await this.loadProctoredAttempt(examAttemptId, actor);
+    if (!attempt.terminated) {
+      throw new BadRequestException('This student has not been removed from the exam');
+    }
+
+    const violationCount = await this.prisma.violation.count({ where: { examAttemptId } });
+
+    const updated = await this.prisma.examAttempt.update({
+      where: { id: examAttemptId },
+      data: {
+        flagged: false,
+        terminated: false,
+        terminatedAt: null,
+        terminatedReason: null,
+        terminatedBy: null,
+        violationBaseline: violationCount,
+        // Reopen the paper: the deadline still applies, so they get whatever is
+        // left of their original window rather than a fresh one.
+        submittedAt: null,
+        autoSubmitted: false,
+      },
+    });
+
+    await this.prisma.violation.create({
+      data: {
+        examAttemptId,
+        userId: attempt.userId,
+        typeKey: ViolationType.MANUAL,
+        weight: 0,
+        metadata: JSON.stringify({
+          note: 'Readmitted to the exam',
+          by: actor.username,
+        }),
+      },
+    });
+
+    this.logger.warn(
+      `${actor.username} readmitted ${attempt.user.username} to exam ${attempt.examId}`,
+    );
+
+    return {
+      attemptId: updated.id,
+      examId: attempt.examId,
+      userId: attempt.userId,
+      username: attempt.user.username,
+      displayName: attempt.user.displayName,
+      by: actor.username,
+      violationBaseline: updated.violationBaseline,
+      integrityScore: updated.integrityScore,
+      at: new Date(),
+    };
+  }
+
+  /** Loads an attempt and asserts the actor is entitled to proctor it. */
+  private async loadProctoredAttempt(examAttemptId: string, actor: AuthenticatedUser) {
+    const attempt = await this.prisma.examAttempt.findUnique({
+      where: { id: examAttemptId },
+      include: {
+        exam: { include: { class: { select: { teacherId: true } } } },
+        user: { select: { id: true, username: true, displayName: true } },
+      },
+    });
+    if (!attempt) throw new NotFoundException(`Exam attempt ${examAttemptId} not found`);
+
+    if (actor.role === Role.TEACHER && attempt.exam.class.teacherId !== actor.id) {
+      throw new ForbiddenException('You do not proctor this exam');
+    }
+    if (actor.role === Role.STUDENT) {
+      throw new ForbiddenException('Only a proctor can do that');
+    }
+
+    return attempt;
   }
 
   /**
@@ -247,7 +437,12 @@ export class ProctoringService {
       submittedAt: a.submittedAt,
       integrityScore: a.integrityScore,
       flagged: a.flagged,
+      terminated: a.terminated,
+      terminatedReason: a.terminatedReason,
+      terminatedBy: a.terminatedBy,
       violationCount: a._count.violations,
+      // What the flag threshold actually measures — see violationBaseline.
+      violationsSinceReadmit: a._count.violations - a.violationBaseline,
       submissionCount: a._count.submissions,
       recentViolations: a.violations.map((v) => ({
         typeKey: v.typeKey,

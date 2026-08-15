@@ -235,6 +235,8 @@ export class ExamsService {
             submittedAt: attempt.submittedAt,
             totalScore: attempt.totalScore,
             integrityScore: attempt.integrityScore,
+            terminated: attempt.terminated,
+            terminatedReason: attempt.terminatedReason,
             endsAt: examDeadline(attempt.startedAt, base),
           }
         : null,
@@ -329,6 +331,15 @@ export class ExamsService {
     const existing = await this.prisma.examAttempt.findUnique({
       where: { examId_userId: { examId: id, userId: requester.id } },
     });
+    // Checked before submittedAt: a removal also closes the attempt, and the
+    // student needs the real reason rather than "already submitted".
+    if (existing?.terminated) {
+      throw new ForbiddenException(
+        existing.terminatedReason
+          ? `You were removed from this exam: ${existing.terminatedReason}`
+          : 'You were removed from this exam',
+      );
+    }
     if (existing?.submittedAt) {
       throw new BadRequestException('You have already submitted this exam');
     }
@@ -390,6 +401,9 @@ export class ExamsService {
       include: { exam: true },
     });
     if (!attempt) throw new NotFoundException('You have not started this exam');
+    if (attempt.terminated) {
+      throw new ForbiddenException('You were removed from this exam');
+    }
     if (attempt.submittedAt) {
       throw new BadRequestException('This exam has already been submitted');
     }
@@ -453,12 +467,15 @@ export class ExamsService {
       percentage: maxPoints === 0 ? 0 : Math.round((a.totalScore / maxPoints) * 100),
       integrityScore: a.integrityScore,
       flagged: a.flagged,
+      terminated: a.terminated,
+      terminatedReason: a.terminatedReason,
+      terminatedBy: a.terminatedBy,
       violationCount: a._count.violations,
       submissionCount: a._count.submissions,
       timeTakenMin: a.submittedAt
         ? Math.round((a.submittedAt.getTime() - a.startedAt.getTime()) / 60_000)
         : null,
-      status: a.submittedAt ? 'SUBMITTED' : 'IN_PROGRESS',
+      status: a.terminated ? 'REMOVED' : a.submittedAt ? 'SUBMITTED' : 'IN_PROGRESS',
     }));
 
     const notStarted = enrolled
@@ -524,6 +541,10 @@ export class ExamsService {
       totalScore: attempt.totalScore,
       integrityScore: attempt.integrityScore,
       flagged: attempt.flagged,
+      terminated: attempt.terminated,
+      terminatedAt: attempt.terminatedAt,
+      terminatedReason: attempt.terminatedReason,
+      terminatedBy: attempt.terminatedBy,
       questionOrder: JSON.parse(attempt.questionOrder) as string[],
       submissions: attempt.submissions.map((s) => ({
         id: s.id,

@@ -6,6 +6,8 @@ import {
   BellOff,
   Flag,
   ShieldAlert,
+  UserCheck,
+  UserX,
   Users,
   Wifi,
   WifiOff,
@@ -31,6 +33,8 @@ import type {
   ProctorNote,
   RecordedViolation,
   StudentFlaggedEvent,
+  StudentReadmittedEvent,
+  StudentTerminatedEvent,
   ViolationRow,
 } from '@/lib/types';
 import { cn, formatClock, relativeTime } from '@/lib/utils';
@@ -48,6 +52,10 @@ interface StudentState {
   violationCount: number;
   /** Set by the server once the attempt passes the violation threshold. */
   flagged: boolean;
+  /** Removed from the exam, by the threshold or by a proctor. */
+  terminated: boolean;
+  terminatedReason: string | null;
+  terminatedBy: string | null;
   currentQuestion: number | null;
   timeRemaining: number | null;
   lastSeen: number | null;
@@ -55,10 +63,11 @@ interface StudentState {
   online: boolean;
 }
 
-type Status = 'active' | 'idle' | 'flagged' | 'offline' | 'submitted';
+type Status = 'active' | 'idle' | 'flagged' | 'offline' | 'submitted' | 'removed';
 
 function statusOf(student: StudentState, now: number): Status {
-  // A hard flag outranks everything, including a finished paper.
+  // Removal is terminal — it outranks every other state.
+  if (student.terminated) return 'removed';
   if (student.flagged) return 'flagged';
   if (student.submitted) return 'submitted';
   if (student.violationCount >= 4 || student.integrityScore < 60) return 'flagged';
@@ -73,6 +82,7 @@ const STATUS_STYLE: Record<Status, { dot: string; label: string }> = {
   flagged: { dot: 'bg-fault', label: 'flagged' },
   offline: { dot: 'bg-faint', label: 'offline' },
   submitted: { dot: 'bg-violet-lit', label: 'submitted' },
+  removed: { dot: 'bg-fault', label: 'removed' },
 };
 
 function violationTone(count: number): string {
@@ -158,6 +168,9 @@ function ProctorBoard() {
                 integrityScore: row.integrityScore,
                 violationCount: row.violationCount,
                 flagged: row.flagged,
+                terminated: row.terminated,
+                terminatedReason: row.terminatedReason,
+                terminatedBy: row.terminatedBy,
                 currentQuestion: null,
                 timeRemaining: null,
                 lastSeen: null,
@@ -236,6 +249,34 @@ function ProctorBoard() {
         description: `${event.violationCount} violations · integrity ${event.integrityScore}`,
         duration: 10_000,
       });
+    });
+
+    socket.on('student-terminated', (event: StudentTerminatedEvent) => {
+      upsert(event.attemptId, {
+        terminated: true,
+        terminatedReason: event.reason,
+        terminatedBy: event.by,
+        flagged: true,
+        submitted: true,
+        violationCount: event.violationCount,
+        integrityScore: event.integrityScore,
+      });
+      beep();
+      toast.error(`${event.displayName} was removed from the exam`, {
+        description: event.reason,
+        duration: 12_000,
+      });
+    });
+
+    socket.on('student-readmitted', (event: StudentReadmittedEvent) => {
+      upsert(event.attemptId, {
+        terminated: false,
+        terminatedReason: null,
+        terminatedBy: null,
+        flagged: false,
+        submitted: false,
+      });
+      toast.success(`${event.displayName} was readmitted to the exam`);
     });
 
     socket.on('student-disconnected', (event: { attemptId?: string }) => {
@@ -366,6 +407,7 @@ function ProctorBoard() {
                       className={cn(
                         'glass glass-lift p-4 text-left',
                         status === 'flagged' && 'border-fault/40 bg-fault/[0.05]',
+                        status === 'removed' && 'border-fault/60 bg-fault/[0.10]',
                       )}
                     >
                       <div className="flex items-start gap-2.5">
@@ -379,7 +421,11 @@ function ProctorBoard() {
                             <span className="truncate text-[13.5px] text-paper">
                               {student.displayName}
                             </span>
-                            {student.flagged ? (
+                            {student.terminated ? (
+                              <span className="shrink-0 rounded border border-fault/60 bg-fault/25 px-1.5 py-px font-mono text-[9px] tracking-[0.1em] text-fault">
+                                REMOVED
+                              </span>
+                            ) : student.flagged ? (
                               <span className="shrink-0 rounded border border-fault/50 bg-fault/20 px-1.5 py-px font-mono text-[9px] tracking-[0.1em] text-fault">
                                 FLAGGED
                               </span>
@@ -536,6 +582,9 @@ function StudentDrawer({
   const [notes, setNotes] = useState<ProctorNote[]>([]);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [removing, setRemoving] = useState(false);
 
   const load = useCallback(() => {
     if (!attemptId) return;
@@ -553,6 +602,8 @@ function StudentDrawer({
     setViolations(null);
     setNotes([]);
     setNote('');
+    setReason('');
+    setRemoveOpen(false);
     load();
   }, [attemptId, load]);
 
@@ -568,6 +619,37 @@ function StudentDrawer({
       toast.error(error instanceof Error ? error.message : 'Could not record that note');
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function removeFromExam() {
+    if (!attemptId || !reason.trim()) return;
+    setRemoving(true);
+    try {
+      await api.post(`/proctoring/attempts/${attemptId}/terminate`, { reason: reason.trim() });
+      // The board updates from the socket broadcast, not from here.
+      toast.success('Student removed from the exam');
+      setRemoveOpen(false);
+      setReason('');
+      load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not remove that student');
+    } finally {
+      setRemoving(false);
+    }
+  }
+
+  async function readmit() {
+    if (!attemptId) return;
+    setRemoving(true);
+    try {
+      await api.post(`/proctoring/attempts/${attemptId}/readmit`);
+      toast.success('Student readmitted — they can reopen the paper');
+      load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not readmit that student');
+    } finally {
+      setRemoving(false);
     }
   }
 
@@ -593,6 +675,35 @@ function StudentDrawer({
         </Button>
       }
     >
+      {student?.terminated ? (
+        <div className="mb-5 rounded-lg border border-fault/40 bg-fault/[0.08] p-4">
+          <div className="flex items-center gap-2 text-[13px] font-medium text-fault">
+            <UserX className="h-4 w-4" strokeWidth={1.8} />
+            Removed from the exam
+          </div>
+          <p className="mt-1.5 text-[12.5px] text-muted">
+            {student.terminatedReason ?? 'No reason recorded.'}
+          </p>
+          <p className="mt-1 font-mono text-[10px] text-faint">
+            {student.terminatedBy ? `By ${student.terminatedBy}` : 'Automatic — violation threshold'}
+          </p>
+          <Button
+            className="mt-3"
+            size="sm"
+            variant="outline"
+            loading={removing}
+            onClick={() => void readmit()}
+          >
+            <UserCheck className="h-3.5 w-3.5" />
+            Readmit to exam
+          </Button>
+          <p className="mt-2 text-[11.5px] text-faint">
+            Reopens the paper against its original deadline. Past violations stay on record but stop
+            counting towards removal.
+          </p>
+        </div>
+      ) : null}
+
       <section>
         <span className="instrument">Timeline</span>
         <div className="hairline mt-1.5 w-10" />
@@ -673,6 +784,55 @@ function StudentDrawer({
           Add note
         </Button>
       </section>
+
+      {student && !student.terminated ? (
+        <section className="mt-6 border-t border-line pt-5">
+          <span className="instrument">Remove from exam</span>
+          <div className="hairline mt-1.5 w-10" />
+
+          {removeOpen ? (
+            <>
+              <p className="mt-3 text-[12.5px] text-muted">
+                This closes {student.displayName}&rsquo;s paper immediately. Their answers so far are
+                scored and kept, and they cannot reopen it until you readmit them. The reason below
+                is shown to them.
+              </p>
+              <Textarea
+                rows={2}
+                className="mt-3"
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                placeholder="Why are you removing this student?"
+              />
+              <div className="mt-2 flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="danger"
+                  loading={removing}
+                  disabled={!reason.trim()}
+                  onClick={() => void removeFromExam()}
+                >
+                  <UserX className="h-3.5 w-3.5" />
+                  Confirm removal
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setRemoveOpen(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </>
+          ) : (
+            <Button
+              className="mt-3"
+              size="sm"
+              variant="outline"
+              onClick={() => setRemoveOpen(true)}
+            >
+              <UserX className="h-3.5 w-3.5" />
+              Remove from exam
+            </Button>
+          )}
+        </section>
+      ) : null}
     </Modal>
   );
 }
