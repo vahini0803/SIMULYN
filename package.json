@@ -8,6 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "setup:env": "node scripts/setup-env.mjs",
     "build": "turbo run build",
     "dev": "turbo run dev",
     "lint": "turbo run lint",

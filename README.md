@@ -43,7 +43,7 @@ in real time.
 
 ```bash
 pnpm install
-cp .env.example .env
+pnpm setup:env
 pnpm db:push && pnpm db:seed
 pnpm dev
 ```
@@ -51,6 +51,32 @@ pnpm dev
 - Web → <http://localhost:3000>
 - API → <http://localhost:3001>
 - API docs → <http://localhost:3001/api/docs>
+
+`pnpm setup:env` writes the three gitignored env files a working copy needs —
+`packages/shared/.env` (Prisma resolves `DATABASE_URL` relative to the schema, so
+the repo-root `.env` is never read), `apps/api/.env` and `apps/web/.env.local` —
+each rendered from its committed `.env.example`. It gives every clone its own JWT
+signing keys and never overwrites a file that already exists; pass `--force` to
+replace them.
+
+It also offers to bind to a LAN address so other devices on the network can reach
+the app. That has to be set in two places at once — `NEXT_PUBLIC_API_URL` tells
+the browser where the API is, and the API's `CORS_ORIGIN` has to list the exact
+origin the browser reports — which is what the script keeps in step:
+
+```bash
+pnpm setup:env --host=192.168.0.7   # skip the prompt
+pnpm setup:env --localhost          # this machine only
+```
+
+Both values are read once at startup: `NEXT_PUBLIC_API_URL` is inlined at build
+time, and `nest start --watch` does not watch `.env`. Restart `pnpm dev` after
+changing either. Reaching the app from another device also needs the two ports
+allowed through the firewall — the script prints the rule.
+
+> Deployment is separate: `docker-compose` and `scripts/deploy.sh` read the
+> repo-root `.env`, which additionally needs `POSTGRES_*`. Copy `.env.example`
+> for that.
 
 ### Demo accounts
 
