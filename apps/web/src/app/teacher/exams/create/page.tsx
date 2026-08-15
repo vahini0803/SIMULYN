@@ -214,19 +214,24 @@ export default function CreateExamPage() {
                 </Field>
               </div>
 
-              <div className="space-y-3 border-t border-line pt-4">
-                <Switch
-                  checked={randomizeOrder}
-                  onChange={setRandomizeOrder}
-                  label="Shuffle question order per student"
-                  hint="Each student gets their own order, stored on their attempt."
-                />
-                <Switch
-                  checked={isPublished}
-                  onChange={setIsPublished}
-                  label="Published"
-                  hint="Only published exams appear in the students' exam list."
-                />
+              <div className="border-t border-line pt-4">
+                <span className="instrument">Options</span>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <Switch
+                    variant="card"
+                    checked={randomizeOrder}
+                    onChange={setRandomizeOrder}
+                    label="Shuffle question order per student"
+                    hint="Each student gets their own order, stored on their attempt."
+                  />
+                  <Switch
+                    variant="card"
+                    checked={isPublished}
+                    onChange={setIsPublished}
+                    label="Published"
+                    hint="Only published exams appear in the students' exam list."
+                  />
+                </div>
               </div>
             </PanelBody>
           </Panel>

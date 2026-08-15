@@ -400,6 +400,7 @@ function ProblemForm() {
                 </Field>
 
                 <Switch
+                  variant="card"
                   checked={isPublished}
                   onChange={setIsPublished}
                   label="Published"

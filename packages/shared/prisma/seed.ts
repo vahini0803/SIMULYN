@@ -88,7 +88,7 @@ const ACCOUNTS: SeedAccount[] = [
     email: 'sunan@simulyn.edu',
     displayName: 'Sunan R',
     role: 'STUDENT',
-    mustChangePassword: true,
+    mustChangePassword: false,
   },
   {
     username: 'vivek',
@@ -96,7 +96,7 @@ const ACCOUNTS: SeedAccount[] = [
     email: 'vivek@simulyn.edu',
     displayName: 'Vivek M',
     role: 'STUDENT',
-    mustChangePassword: true,
+    mustChangePassword: false,
   },
   {
     username: 'vahini',
@@ -104,7 +104,7 @@ const ACCOUNTS: SeedAccount[] = [
     email: 'vahini@simulyn.edu',
     displayName: 'Vahini S',
     role: 'STUDENT',
-    mustChangePassword: true,
+    mustChangePassword: false,
   },
   {
     username: 'sanjan',
@@ -112,7 +112,7 @@ const ACCOUNTS: SeedAccount[] = [
     email: 'sanjan@simulyn.edu',
     displayName: 'Sanjan P',
     role: 'STUDENT',
-    mustChangePassword: true,
+    mustChangePassword: false,
   },
 ];
 
