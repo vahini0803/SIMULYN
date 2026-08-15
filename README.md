@@ -96,14 +96,32 @@ for a new password. To skip that in a demo, set it to `false` in
 
 ## Environment variables
 
+`pnpm setup:env` writes these; the table is the reference for changing one by hand.
+Which file a variable belongs in matters — there is no single `.env` that feeds
+everything:
+
+| File | Read by | Carries |
+|---|---|---|
+| `packages/shared/.env` | Prisma CLI | `DATABASE_URL` — resolved relative to the schema, so the repo-root `.env` is **never** consulted |
+| `apps/api/.env` | the API | its own `DATABASE_URL`, the `JWT_*` keys, `PORT`, `CORS_ORIGIN`, `NODE_ENV`, and any `EXEC_*` / `OLLAMA_*` / `CLOUD_LLM_*` override. Takes precedence over the repo-root `.env` |
+| `apps/web/.env.local` | Next.js | `NEXT_PUBLIC_API_URL` |
+| `.env` (repo root) | `docker-compose`, `deploy.sh` | deployment only — `POSTGRES_*` and the production overrides |
+
+`DATABASE_URL` is needed in **both** of the first two: Prisma reads one, the running
+API reads the other. Everything not listed falls back to the defaults in the table
+below, so a missing key is usually fine.
+
+All four are gitignored; each has a committed `.env.example` beside it.
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `DATABASE_URL` | `file:./dev.db` | SQLite path resolves against `packages/shared/prisma/` |
 | `JWT_SECRET` / `JWT_REFRESH_SECRET` | — | **Change for production.** Signing keys |
 | `JWT_EXPIRES_IN` / `JWT_REFRESH_EXPIRES_IN` | `15m` / `7d` | Token lifetimes |
 | `PORT` | `3001` | API port |
-| `CORS_ORIGIN` | `http://localhost:3000` | Comma-separated allowed origins |
-| `NEXT_PUBLIC_API_URL` | `http://localhost:3001` | Baked into the web build |
+| `NODE_ENV` | `development` | `production` hardens the refresh cookie (`secure`, `sameSite=strict`) |
+| `CORS_ORIGIN` | `http://localhost:3000` | Comma-separated allowed origins. Must contain the exact origin the browser reports |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:3001` | Baked into the web build. Must agree with `CORS_ORIGIN` |
 | `EXEC_MAX_CONCURRENCY` | `20` | Simultaneous executions before queuing |
 | `EXEC_TIMEOUT_MS` | `8000` | Wall clock per test case |
 | `PYTHON_BIN` / `CXX_BIN` / `JAVAC_BIN` / `JAVA_BIN` | auto-detected | Override toolchain paths |
@@ -129,10 +147,15 @@ simulyn/
 │   └── web/                 Next.js frontend
 │       ├── src/app/         landing · login · student/* · teacher/* · admin/*
 │       ├── src/components/  ui primitives, problem solver, charts, discussion
+│       ├── src/hooks/       useAuth, useProctoring
 │       └── test/            unit tests (node:test)
-└── packages/shared/
-    ├── prisma/              schema, migrations, seed, generated postgres schema
-    └── src/                 constants, types, JSON helpers
+├── packages/shared/
+│   ├── prisma/              schema, migrations, seed, derived postgres schema
+│   ├── scripts/             postgres schema + migration generators
+│   └── src/                 constants, types, JSON helpers
+└── scripts/
+    ├── setup-env.mjs        writes the gitignored .env files
+    └── deploy.sh            build, migrate and restart the containers
 ```
 
 ### How code execution works
@@ -179,6 +202,7 @@ written onto the attempt's timeline as `MANUAL` entries.
 ## Commands
 
 ```bash
+pnpm setup:env              # write the gitignored .env files (see Quick start)
 pnpm dev                    # api :3001 and web :3000, both watching
 pnpm build                  # build all packages
 pnpm lint                   # typecheck everything
@@ -186,14 +210,32 @@ pnpm lint                   # typecheck everything
 pnpm db:push                # sync schema without a migration (dev)
 pnpm db:seed                # wipe and repopulate demo data
 pnpm db:studio              # browse the database
-
-pnpm --filter web test      # frontend unit tests
-pnpm --filter api test:smoke        # 96 API checks — needs a running server
-pnpm --filter api test:phase5       # 59 teaching/exam/proctoring checks
-pnpm --filter api test:termination  # 30 exam-removal and readmission checks
+pnpm db:generate            # regenerate the Prisma client
 ```
 
-The API smoke suites mutate data. Re-run `pnpm db:seed` afterwards.
+### Tests
+
+```bash
+pnpm --filter web test              # 23 frontend unit tests (node:test)
+
+pnpm --filter api test:smoke        #  96 REST, auth, execution and grading checks
+pnpm --filter api test:phase5       #  59 discussions, teacher tooling, exams, proctoring
+pnpm --filter api test:features     #  23 hints, badges, streaks, violation thresholds
+pnpm --filter api test:termination  #  30 exam removal, readmission and authorisation
+pnpm --filter api test:leak         #  16 checks that hidden test cases never leak
+```
+
+The five API suites run against a **live server** — start one with `pnpm dev` (or
+`node apps/api/dist/main.js` after a build) first. They mutate data and assume the
+seeded fixtures, so re-seed between them:
+
+```bash
+pnpm db:seed && pnpm --filter api test:smoke
+```
+
+> On Windows a running API holds Prisma's query-engine DLL, so `pnpm build`,
+> `pnpm lint` and `db:generate` fail with `EPERM: operation not permitted, rename
+> …query_engine-windows.dll.node`. Stop the dev server and re-run.
 
 ---
 
@@ -221,15 +263,47 @@ container so a failure never leaves a half-started API, and waits for health che
 ### Schema changes
 
 `packages/shared/prisma/schema.prisma` is the single source of truth and stays
-SQLite-compatible — no `@db.Text`, no native arrays (JSON is stored as strings). The
-PostgreSQL schema is **derived**, never hand-edited:
+SQLite-compatible — no `@db.Text`, no native arrays (JSON is stored as strings).
+`prisma/postgres/schema.prisma` is **derived** from it, never hand-edited.
+
+In development, apply a schema edit straight to SQLite:
 
 ```bash
-pnpm --filter @simulyn/shared db:migration:init     # SQLite migration
-pnpm --filter @simulyn/shared db:postgres:migrate   # derive pg schema + migration
+pnpm db:push && pnpm db:seed
 ```
 
-Both migration sets are committed. Production runs `db:postgres:deploy`.
+Both migration sets are committed and production runs `db:postgres:deploy`, so a
+schema change also needs a migration in each. The generators only ever write the
+`0_init` baseline — they diff `--from-empty` and skip a directory that already
+exists — so an **incremental** migration is produced by diffing the previous schema
+against the new one:
+
+```bash
+pnpm --filter @simulyn/shared db:postgres:schema     # re-derive the pg schema first
+
+cd packages/shared
+NAME=20260815_attempt_termination
+mkdir -p prisma/migrations/$NAME prisma/postgres/migrations/$NAME
+
+git show HEAD:packages/shared/prisma/schema.prisma > /tmp/old.prisma
+pnpm exec prisma migrate diff --from-schema-datamodel /tmp/old.prisma \
+  --to-schema-datamodel prisma/schema.prisma --script \
+  > prisma/migrations/$NAME/migration.sql
+
+git show HEAD:packages/shared/prisma/postgres/schema.prisma > /tmp/old-pg.prisma
+pnpm exec prisma migrate diff --from-schema-datamodel /tmp/old-pg.prisma \
+  --to-schema-datamodel prisma/postgres/schema.prisma --script \
+  > prisma/postgres/migrations/$NAME/migration.sql
+```
+
+Read both files before committing — SQLite has no `ALTER TABLE … ADD CONSTRAINT`, so
+Prisma renders most changes as a table rebuild, while PostgreSQL gets a plain
+`ALTER TABLE`.
+
+> Neither migrations directory has a `migration_lock.toml`, because the custom
+> generators do not write one. That is why the diff above goes through
+> `--from-schema-datamodel` rather than the usual `--from-migrations`, which fails
+> with *"Could not determine the connector from the migrations directory"*.
 
 ---
 
@@ -244,5 +318,8 @@ Both migration sets are committed. Production runs `db:postgres:deploy`.
 - **Design tokens live in `apps/web/src/app/globals.css`.** Use the named colours
   (`ink`, `violet`, `brass`, `paper`, `trace`, `fault`) rather than new hex values, and
   the `.glass`, `.instrument` and `.hairline` utilities.
-- **Verify before claiming done:** `pnpm build`, `pnpm lint`, the unit tests, and the
-  smoke suites against a running server.
+- **A value both sides need belongs in `packages/shared`,** not in two files that
+  drift. `FLAG_THRESHOLD` and the violation catalogue are shared for exactly this
+  reason.
+- **Verify before claiming done:** `pnpm build`, `pnpm lint`, `pnpm --filter web test`,
+  and the five API suites against a running server, re-seeding between them.
