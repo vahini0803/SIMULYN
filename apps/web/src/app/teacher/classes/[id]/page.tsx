@@ -6,6 +6,7 @@ import {
   CalendarClock,
   Check,
   Copy,
+  Maximize2,
   Search,
   Trash2,
   UserPlus,
@@ -16,6 +17,7 @@ import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
+import { JoinCodeDisplay } from '@/components/class/join-code-display';
 import { PageTransition } from '@/components/layout/app-shell';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge, DifficultyBadge } from '@/components/ui/badge';
@@ -62,6 +64,7 @@ export default function ClassDetailPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showCode, setShowCode] = useState(false);
   const [inspecting, setInspecting] = useState<ClassStudentProgress | null>(null);
 
   function loadStudents() {
@@ -132,25 +135,43 @@ export default function ClassDetailPage() {
           </div>
 
           {cls ? (
-            <button
-              onClick={() => {
-                void navigator.clipboard.writeText(cls.code);
-                setCopied(true);
-                toast.success('Join code copied');
-                setTimeout(() => setCopied(false), 1600);
-              }}
-              className="flex items-center gap-2 rounded-lg border border-brass/35 bg-brass/12 px-3 py-2 transition-colors hover:border-brass/60"
-            >
-              <div className="text-left">
-                <span className="instrument">Join code</span>
-                <div className="font-mono text-[15px] font-semibold text-brass-lit">{cls.code}</div>
-              </div>
-              {copied ? (
-                <Check className="h-4 w-4 text-trace" />
-              ) : (
-                <Copy className="h-4 w-4 text-brass-lit" />
-              )}
-            </button>
+            <div className="flex items-center gap-2">
+              {/*
+                Clicking the code puts it on screen for the room; copying is the
+                secondary action, on its own control so neither is a surprise.
+              */}
+              <button
+                onClick={() => setShowCode(true)}
+                title="Show the join code full screen"
+                className="flex items-center gap-2 rounded-lg border border-brass/35 bg-brass/12 px-3 py-2 transition-colors hover:border-brass/60"
+              >
+                <div className="text-left">
+                  <span className="instrument">Join code</span>
+                  <div className="font-mono text-[15px] font-semibold text-brass-lit">
+                    {cls.code}
+                  </div>
+                </div>
+                <Maximize2 className="h-4 w-4 text-brass-lit" />
+              </button>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Copy join code"
+                onClick={() => {
+                  void navigator.clipboard.writeText(cls.code);
+                  setCopied(true);
+                  toast.success('Join code copied');
+                  setTimeout(() => setCopied(false), 1600);
+                }}
+              >
+                {copied ? (
+                  <Check className="h-4 w-4 text-trace" />
+                ) : (
+                  <Copy className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
           ) : null}
         </header>
 
@@ -381,6 +402,13 @@ export default function ClassDetailPage() {
           </Panel>
         ) : null}
       </div>
+
+      <JoinCodeDisplay
+        open={showCode && cls !== null}
+        code={cls?.code ?? ''}
+        name={cls?.name ?? ''}
+        onClose={() => setShowCode(false)}
+      />
 
       <AddStudentsModal
         open={addOpen}

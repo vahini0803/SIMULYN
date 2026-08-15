@@ -46,7 +46,7 @@
   }
 
   html {
-    scrollbar-color: #2a2a40 transparent;
+    scrollbar-color: var(--color-line-strong) transparent;
   }
 
   body {
@@ -57,21 +57,16 @@
     font-feature-settings: 'cv11', 'ss01';
   }
 
-  /* Ambient bench light: two soft sources, fixed so panels move against them. */
-  body::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: 0;
-    background:
-      radial-gradient(60rem 40rem at 12% -10%, #7352b826, transparent 60%),
-      radial-gradient(45rem 35rem at 95% 8%, #c7a34614, transparent 55%);
-  }
+  /*
+    The ambient bench glow is gone: it was two fixed violet/brass gradients, and
+    a tinted wash over a white page reads as a rendering fault rather than
+    atmosphere. Flat surfaces are also what the LeetCode system expects.
+  */
 
   ::selection {
+    /* Always blue, so white type is the readable choice in both themes. */
     background: var(--color-violet);
-    color: white;
+    color: #ffffff;
   }
 
   :focus-visible {

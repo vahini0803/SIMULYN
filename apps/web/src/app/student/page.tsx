@@ -1,11 +1,21 @@
 'use client';
 
-import { CalendarClock, CheckCircle2, Flame, Inbox, Trophy, XCircle, Zap } from 'lucide-react';
+import {
+  CalendarClock,
+  CheckCircle2,
+  Flame,
+  Inbox,
+  Trophy,
+  UserPlus,
+  XCircle,
+  Zap,
+} from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
 import { ActivityHeatmap } from '@/components/charts/activity-heatmap';
 import { SkillRadar, toSkillData } from '@/components/charts/skill-radar';
+import { JoinClassDialog } from '@/components/class/join-class-dialog';
 import { PageTransition } from '@/components/layout/app-shell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -35,6 +45,7 @@ export default function StudentDashboard() {
   const [progress, setProgress] = useState<GamificationMe | null>(null);
   const [submissions, setSubmissions] = useState<SubmissionListRow[] | null>(null);
   const [exams, setExams] = useState<ExamSummary[] | null>(null);
+  const [joinOpen, setJoinOpen] = useState(false);
 
   useEffect(() => {
     void api.get<GamificationMe>('/gamification/me').then(setProgress).catch(() => setProgress(null));
@@ -58,12 +69,19 @@ export default function StudentDashboard() {
   return (
     <PageTransition>
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-        <header>
-          <span className="instrument">Bench · {user?.username}</span>
-          <h1 className="mt-2 text-[28px] leading-tight font-semibold tracking-[-0.03em] text-white">
-            {user?.displayName.split(' ')[0]}
-          </h1>
-          <p className="mt-1 text-sm text-muted">{greeting(progress)}</p>
+        <header className="flex flex-wrap items-end justify-between gap-4">
+          <div className="min-w-0">
+            <span className="instrument">Bench · {user?.username}</span>
+            <h1 className="mt-2 text-[28px] leading-tight font-semibold tracking-[-0.03em] text-white">
+              {user?.displayName.split(' ')[0]}
+            </h1>
+            <p className="mt-1 text-sm text-muted">{greeting(progress)}</p>
+          </div>
+
+          <Button variant="outline" onClick={() => setJoinOpen(true)}>
+            <UserPlus className="h-4 w-4" />
+            Join a class
+          </Button>
         </header>
 
         <section className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -241,6 +259,15 @@ export default function StudentDashboard() {
             </PanelBody>
           </Panel>
         </div>
+
+        <JoinClassDialog
+          open={joinOpen}
+          onClose={() => setJoinOpen(false)}
+          // A new class brings its own exams and assigned problems with it.
+          onJoined={() => {
+            void api.get<ExamSummary[]>('/exams').then(setExams).catch(() => undefined);
+          }}
+        />
       </div>
     </PageTransition>
   );
