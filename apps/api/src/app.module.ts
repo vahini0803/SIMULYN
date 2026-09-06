@@ -22,6 +22,7 @@ import { GamificationModule } from './modules/gamification/gamification.module';
 import { MentorModule } from './modules/mentor/mentor.module';
 import { ProblemsModule } from './modules/problems/problems.module';
 import { ProctoringModule } from './modules/proctoring/proctoring.module';
+import { ResearchModule } from './modules/research/research.module';
 import { SubmissionsModule } from './modules/submissions/submissions.module';
 import { UsersModule } from './modules/users/users.module';
 
@@ -49,6 +50,7 @@ import { UsersModule } from './modules/users/users.module';
     AnalyticsModule,
     DiscussionsModule,
     AdminModule,
+    ResearchModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

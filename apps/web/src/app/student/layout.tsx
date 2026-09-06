@@ -1,6 +1,13 @@
 'use client';
 
-import { CircuitBoard, FileClock, LayoutDashboard, Trophy, User } from 'lucide-react';
+import {
+  CircuitBoard,
+  ClipboardList,
+  FileClock,
+  LayoutDashboard,
+  Trophy,
+  User,
+} from 'lucide-react';
 
 import { AppShell, type NavItem } from '@/components/layout/app-shell';
 import { LockdownProvider } from '@/components/layout/lockdown';
@@ -13,6 +20,7 @@ const NAV: NavItem[] = [
   { href: '/student/exams', label: 'Exams', icon: FileClock },
   { href: '/student/leaderboard', label: 'Leaderboard', icon: Trophy },
   { href: '/student/profile', label: 'Profile', icon: User },
+  { href: '/student/survey', label: 'Feedback survey', icon: ClipboardList },
 ];
 
 export default function StudentLayout({ children }: { children: React.ReactNode }) {

@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
+import { ThemeSwitcher } from '@/components/brand/theme-switcher';
 import { useLockdown } from '@/components/layout/lockdown';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -81,7 +82,7 @@ export function AppShell({
         </span>
         {!collapsed ? (
           <div className="min-w-0">
-            <div className="text-sm font-semibold tracking-[-0.02em] text-paper">SIMULYN</div>
+            <div className="brand-mark text-sm font-semibold tracking-[-0.02em]">SIMULYN</div>
             <div className="instrument">{role.toLowerCase()}</div>
           </div>
         ) : null}
@@ -241,6 +242,7 @@ export function AppShell({
             )}
 
             <div className="flex shrink-0 items-center gap-3">
+              <ThemeSwitcher />
               <div className="hidden text-right sm:block">
                 <div className="text-[13px] font-medium text-paper">{user?.displayName}</div>
                 <div className="font-mono text-[10px] text-faint">@{user?.username}</div>

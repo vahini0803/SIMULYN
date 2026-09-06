@@ -32,6 +32,8 @@ export type {
   DiscussionPost,
   DiscussionVote,
   MentorRequest,
+  StudyConsent,
+  SurveyResponse,
 } from '@prisma/client';
 
 // ── JSON column payload shapes ──

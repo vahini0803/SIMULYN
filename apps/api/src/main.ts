@@ -49,6 +49,7 @@ async function bootstrap(): Promise<void> {
     .addTag('analytics', 'Class and problem analytics')
     .addTag('discussions', 'Per-problem discussion threads')
     .addTag('admin', 'System overview, health and configuration')
+    .addTag('research', 'Study consent, exit survey and pseudonymized data export')
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);

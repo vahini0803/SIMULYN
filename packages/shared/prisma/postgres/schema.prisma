@@ -43,6 +43,8 @@ model User {
   discussions     DiscussionPost[]
   discussionVotes DiscussionVote[]
   mentorRequests  MentorRequest[]
+  studyConsent    StudyConsent?
+  surveyResponse  SurveyResponse?
 
   @@index([email])
   @@index([username])
@@ -438,4 +440,27 @@ model MentorRequest {
 
   @@index([userId])
   @@index([codeHash])
+}
+
+// ── RESEARCH STUDY (evaluation data for the paper) ──
+
+model StudyConsent {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  consented   Boolean  @default(true)
+  ageConfirm  Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
+// A short System Usability Scale (10 items, 1-5 Likert) plus free text,
+// taken once per participant near the end of the study window.
+model SurveyResponse {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  susAnswers  String   // JSON array of 10 ints, 1-5
+  susScore    Float    // computed 0-100 SUS score
+  freeText    String?
+  createdAt   DateTime @default(now())
 }

@@ -5,6 +5,7 @@ import { ArrowRight, Cpu, ShieldCheck, Sparkles, TerminalSquare } from 'lucide-r
 import Link from 'next/link';
 
 import { SignalTrace } from '@/components/brand/signal-trace';
+import { ThemeSwitcher } from '@/components/brand/theme-switcher';
 import { Button } from '@/components/ui/button';
 
 const CAPABILITIES = [
@@ -25,31 +26,38 @@ const READINGS = [
 export default function LandingPage() {
   return (
     <main className="relative min-h-dvh overflow-hidden">
-      <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-6">
+      <div className="orb-field">
+        <div className="orb orb-1" />
+        <div className="orb orb-2" />
+        <div className="orb orb-3" />
+      </div>
+
+      <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between px-6 py-6">
         <div className="flex items-baseline gap-2.5">
-          <span className="text-lg font-semibold tracking-[-0.03em] text-paper">SIMULYN</span>
+          <span className="brand-mark text-lg font-semibold tracking-[-0.03em]">SIMULYN</span>
           <span className="instrument hidden sm:inline">virtual engineering labs</span>
         </div>
-        <Link href="/login">
-          <Button variant="ghost" size="sm">
-            Sign in
-          </Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          <ThemeSwitcher />
+          <Link href="/login">
+            <Button variant="ghost" size="sm">
+              Sign in
+            </Button>
+          </Link>
+        </div>
       </header>
 
-      <section className="relative mx-auto grid max-w-6xl gap-12 px-6 pt-10 pb-16 lg:grid-cols-[1.05fr_1fr] lg:items-center lg:pt-20">
+      <section className="relative z-10 mx-auto grid max-w-6xl gap-12 px-6 pt-10 pb-16 lg:grid-cols-[1.05fr_1fr] lg:items-center lg:pt-20">
         <motion.div
           initial={{ opacity: 0, y: 18 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, ease: [0.2, 0.8, 0.2, 1] }}
         >
           <span className="instrument">Bench 01 · online</span>
-          <h1 className="mt-4 text-[clamp(2.5rem,6vw,4.25rem)] leading-[0.98] font-semibold tracking-[-0.04em] text-white">
+          <h1 className="font-display mt-4 text-[clamp(2.5rem,6vw,4.25rem)] leading-[0.98] font-semibold tracking-[-0.04em] text-white">
             The lab bench,
             <br />
-            <span className="bg-gradient-to-r from-violet-lit via-paper to-brass-lit bg-clip-text text-transparent">
-              without the lab.
-            </span>
+            <span className="brand-mark">without the lab.</span>
           </h1>
 
           <p className="mt-5 max-w-md text-[15px] leading-relaxed text-muted">
@@ -114,7 +122,7 @@ export default function LandingPage() {
         </motion.div>
       </section>
 
-      <section className="mx-auto max-w-6xl px-6 pb-24">
+      <section className="relative z-10 mx-auto max-w-6xl px-6 pb-24">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {CAPABILITIES.map((capability, i) => (
             <motion.div
@@ -132,9 +140,9 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <footer className="border-t border-line">
+      <footer className="relative z-10 border-t border-line">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
-          <span className="font-mono text-[11px] text-faint">SIMULYN</span>
+          <span className="brand-mark font-mono text-[11px]">SIMULYN</span>
           <span className="font-mono text-[11px] text-faint">Engineering education platform</span>
         </div>
       </footer>
