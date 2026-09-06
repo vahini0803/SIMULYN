@@ -34,6 +34,7 @@
 
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-jetbrains), ui-monospace, 'SF Mono', monospace;
+  --font-display: var(--font-syne), var(--font-sans);
 
   --radius-panel: 14px;
 
@@ -146,6 +147,82 @@
   .tabular {
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.02em;
+  }
+
+  /* SIMULYN wordmark: violet -> paper -> brass sweep, Syne display face. */
+  .brand-mark {
+    font-family: var(--font-display);
+    background: linear-gradient(
+      90deg,
+      var(--color-violet-lit) 0%,
+      var(--color-violet-lit) 15%,
+      var(--color-paper) 40%,
+      var(--color-paper) 60%,
+      var(--color-brass-lit) 85%,
+      var(--color-brass-lit) 100%
+    );
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+  }
+
+  .font-display {
+    font-family: var(--font-display);
+  }
+
+  /* Ambient bench orbs for the landing page background. */
+  .orb-field {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .orb {
+    position: absolute;
+    border-radius: 999px;
+    filter: blur(2px);
+  }
+  .orb-1 {
+    width: 600px;
+    height: 600px;
+    top: -10%;
+    left: -8%;
+    background: radial-gradient(circle, color-mix(in srgb, var(--color-violet) 28%, transparent) 0%, transparent 70%);
+    animation: orb-drift-1 26s ease-in-out infinite alternate;
+  }
+  .orb-2 {
+    width: 500px;
+    height: 500px;
+    bottom: -5%;
+    right: -5%;
+    background: radial-gradient(circle, color-mix(in srgb, var(--color-brass) 16%, transparent) 0%, transparent 70%);
+    animation: orb-drift-2 32s ease-in-out infinite alternate;
+  }
+  .orb-3 {
+    width: 400px;
+    height: 400px;
+    top: 40%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: radial-gradient(circle, color-mix(in srgb, var(--color-violet) 10%, transparent) 0%, transparent 70%);
+    animation: orb-drift-3 20s ease-in-out infinite alternate;
+  }
+}
+
+@keyframes orb-drift-1 {
+  to {
+    transform: translate(40px, 30px) scale(1.06);
+  }
+}
+@keyframes orb-drift-2 {
+  to {
+    transform: translate(-30px, -40px) scale(1.08);
+  }
+}
+@keyframes orb-drift-3 {
+  to {
+    transform: translate(-50%, -50%) translate(20px, -20px) scale(1.04);
   }
 }
 

@@ -2,24 +2,24 @@ import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleIni
 import { ConfigService } from '@nestjs/config';
 import { parseJsonOrNull, type ElectronicsQuestion } from '@simulyn/shared';
 
-import { PrismaService } from '../../prisma/prisma.service';
-import { outputsMatch } from './compare';
-import { Executor, normaliseJavaSource, type LangKey, type RunOutcome } from './executor';
 import {
   assertValidHarness,
   buildProgram,
+  extractTraceEvents,
   generateTracedDriver,
   HarnessError,
-  RESULT_MARKER,
+  normaliseJavaSource,
+  outputsMatch,
+  splitDriverOutput,
   traceFidelity,
   type HarnessSpec,
-} from './harness';
-import {
-  MAX_TRACE_EVENTS,
-  TRACE_MARKER,
-  type TraceEvent,
+  type LangKey,
+  type RunOutcome,
   type TraceResult,
-} from './trace.types';
+} from '@simulyn/shared/execution';
+
+import { PrismaService } from '../../prisma/prisma.service';
+import { ExecutionQueueService } from './execution-queue.service';
 
 export interface TestOutcome {
   index: number;
@@ -61,66 +61,6 @@ export function maskHiddenOutcome(outcome: TestOutcome): TestOutcome {
   };
 }
 
-/**
- * Splits the driver's return value from whatever the student printed.
- *
- * Without this a stray `print()` inside an otherwise correct solution would
- * land in stdout ahead of the result and fail every case.
- */
-/**
- * Pulls trace lines out of stdout, leaving the student's own printing behind.
- *
- * The marker can appear mid-line when their last print had no trailing
- * newline, so each line is split at the marker rather than merely tested with
- * startsWith.
- */
-export function extractTraceEvents(raw: string): {
-  events: TraceEvent[];
-  truncated: boolean;
-  remainder: string;
-} {
-  if (!raw.includes(TRACE_MARKER)) {
-    return { events: [], truncated: false, remainder: raw };
-  }
-
-  const events: TraceEvent[] = [];
-  const kept: string[] = [];
-
-  for (const line of raw.split('\n')) {
-    const at = line.indexOf(TRACE_MARKER);
-    if (at === -1) {
-      kept.push(line);
-      continue;
-    }
-
-    if (at > 0) kept.push(line.slice(0, at));
-
-    try {
-      const event = JSON.parse(line.slice(at + TRACE_MARKER.length)) as TraceEvent;
-      if (events.length < MAX_TRACE_EVENTS) events.push(event);
-    } catch {
-      // A partially flushed line is not worth failing the whole run over.
-    }
-  }
-
-  return {
-    events,
-    truncated: events.length >= MAX_TRACE_EVENTS,
-    remainder: kept.join('\n'),
-  };
-}
-
-export function splitDriverOutput(raw: string): { actual: string; studentOutput: string } {
-  // lastIndexOf: the driver writes its marker last, so a student echoing the
-  // same string earlier cannot hijack the parse.
-  const at = raw.lastIndexOf(RESULT_MARKER);
-  if (at === -1) return { actual: raw.trim(), studentOutput: '' };
-
-  return {
-    actual: raw.slice(at + RESULT_MARKER.length).trim(),
-    studentOutput: raw.slice(0, at).trim(),
-  };
-}
 
 export interface EvaluationResult {
   ok: boolean;
@@ -153,19 +93,20 @@ export interface ElectronicsResult {
 @Injectable()
 export class ExecutionService implements OnModuleInit {
   private readonly logger = new Logger(ExecutionService.name);
-  private readonly executor: Executor;
   private readonly timeoutMs: number;
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly queue: ExecutionQueueService,
     config: ConfigService,
   ) {
-    this.executor = new Executor(config.get<number>('execution.maxConcurrency') ?? 20);
+    // No Executor of its own: every path here goes through the queue service,
+    // which owns the in-process pool used for inline mode and for fallback.
     this.timeoutMs = config.get<number>('execution.timeoutMs') ?? 8000;
   }
 
   onModuleInit(): void {
-    const available = this.executor.availability();
+    const available = this.queue.availability();
     const usable = Object.entries(available)
       .filter(([, ok]) => ok)
       .map(([lang]) => lang);
@@ -181,13 +122,9 @@ export class ExecutionService implements OnModuleInit {
     }
   }
 
-  /** Which languages this host can run, plus live semaphore state. */
-  health() {
-    return {
-      languages: this.executor.availability(),
-      concurrency: this.executor.concurrency,
-      timeoutMs: this.timeoutMs,
-    };
+  /** Which languages this host can run, plus live engine state. */
+  async health() {
+    return { ...(await this.queue.health()), timeoutMs: this.timeoutMs };
   }
 
   // ── raw run ────────────────────────────────────────────────────────
@@ -202,7 +139,15 @@ export class ExecutionService implements OnModuleInit {
       const { imports, body } = normaliseJavaSource(code);
       source = `${imports.join('\n')}\n${body}`;
     }
-    return this.executor.execute(lang, source, stdin, { timeoutMs: this.timeoutMs });
+    // Runs on the executor pool too — untrusted code should not execute in the
+    // API process just because it arrived from Run rather than Submit.
+    return this.queue.raw({
+      kind: 'run',
+      language: lang,
+      program: source,
+      stdin,
+      timeoutMs: this.timeoutMs,
+    });
   }
 
   // ── evaluation against a problem's test cases ──────────────────────
@@ -231,60 +176,59 @@ export class ExecutionService implements OnModuleInit {
       );
     }
 
-    const program = buildProgram(lang, code, spec);
-    const prepared = await this.executor.prepare(lang, program, { timeoutMs: this.timeoutMs });
-    const startedAt = Date.now();
+    // Hand the whole submission to the executor pool (or run it here when no
+    // queue is configured). The engine never sees the database.
+    const outcome = await this.queue.grade({
+      kind: 'grade',
+      submissionId: problemId,
+      code,
+      language: lang,
+      harness: spec,
+      timeoutMs: this.timeoutMs,
+      testCases: problem.testCases.map((testCase) => ({
+        id: testCase.id,
+        input: testCase.input,
+        expected: testCase.expected,
+        isHidden: testCase.isHidden,
+        order: testCase.order,
+      })),
+    });
 
-    try {
-      if (prepared.compileError) {
-        return {
-          ok: false,
-          allPassed: false,
-          compileError: prepared.compileError,
-          results: [],
-          passedCount: 0,
-          totalCount: problem.testCases.length,
-          totalMs: Date.now() - startedAt,
-        };
-      }
-
-      const results: TestOutcome[] = [];
-      for (const [index, testCase] of problem.testCases.entries()) {
-        const run = await prepared.run(testCase.input, { timeoutMs: this.timeoutMs });
-        const { actual, studentOutput } = splitDriverOutput(run.stdout);
-        const passed =
-          !run.timedOut &&
-          run.exitCode === 0 &&
-          outputsMatch(actual, testCase.expected, spec.normalize);
-
-        results.push({
-          index,
-          isHidden: testCase.isHidden,
-          input: testCase.input,
-          expected: testCase.expected,
-          actual: actual || null,
-          stdout: studentOutput || null,
-          passed,
-          stderr: run.stderr.trim() || null,
-          exitCode: run.exitCode,
-          timedOut: run.timedOut,
-          executionMs: run.executionMs,
-        });
-      }
-
-      const passedCount = results.filter((r) => r.passed).length;
+    if (outcome.compileError) {
       return {
-        ok: true,
-        allPassed: passedCount === results.length,
-        compileError: null,
-        results,
-        passedCount,
-        totalCount: results.length,
-        totalMs: Date.now() - startedAt,
+        ok: false,
+        allPassed: false,
+        compileError: outcome.compileError,
+        results: [],
+        passedCount: 0,
+        totalCount: problem.testCases.length,
+        totalMs: outcome.totalMs,
       };
-    } finally {
-      await prepared.dispose();
     }
+
+    const results: TestOutcome[] = outcome.results.map((row, index) => ({
+      index,
+      isHidden: row.isHidden,
+      input: row.input,
+      expected: row.expected,
+      actual: row.actual,
+      stdout: row.stdout,
+      passed: row.passed,
+      stderr: row.stderr,
+      exitCode: row.exitCode,
+      timedOut: row.timedOut,
+      executionMs: row.executionMs,
+    }));
+
+    return {
+      ok: outcome.ok,
+      allPassed: outcome.passedCount === results.length && results.length > 0,
+      compileError: null,
+      results,
+      passedCount: outcome.passedCount,
+      totalCount: results.length,
+      totalMs: outcome.totalMs,
+    };
   }
 
   /** Hides everything about a hidden case except whether it passed. */
@@ -337,9 +281,15 @@ export class ExecutionService implements OnModuleInit {
     }
 
     const program = generateTracedDriver(lang, code, spec, testCase.input);
-    const prepared = await this.executor.prepare(lang, program, { timeoutMs: this.timeoutMs });
+    const prepared = await this.queue.raw({
+      kind: 'run',
+      language: lang,
+      program,
+      stdin: '',
+      timeoutMs: this.timeoutMs,
+    });
 
-    try {
+    {
       if (prepared.compileError) {
         return {
           ok: false,
@@ -355,12 +305,7 @@ export class ExecutionService implements OnModuleInit {
         };
       }
 
-      // A traced run emits far more output than a plain one.
-      const run = await prepared.run('', {
-        timeoutMs: this.timeoutMs,
-        maxOutputBytes: 4 * 1024 * 1024,
-      });
-
+      const run = prepared;
       const { events, truncated, remainder } = extractTraceEvents(run.stdout);
       const { studentOutput } = splitDriverOutput(remainder);
 
@@ -376,8 +321,6 @@ export class ExecutionService implements OnModuleInit {
         executionMs: run.executionMs,
         fidelity: traceFidelity(lang),
       };
-    } finally {
-      await prepared.dispose();
     }
   }
 

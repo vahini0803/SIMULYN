@@ -6,6 +6,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
 
 import { AppModule } from './app.module';
+import { RedisIoAdapter } from './common/redis-io.adapter';
 import { REFRESH_COOKIE } from './config/configuration';
 
 async function bootstrap(): Promise<void> {
@@ -14,6 +15,31 @@ async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
 
   app.use(cookieParser());
+
+  // Health probes stay off the prefix so kubelet and the Docker HEALTHCHECK
+  // can hit one fixed path no matter how the app is mounted.
+  const globalPrefix = config.get<string>('globalPrefix');
+  if (globalPrefix) {
+    app.setGlobalPrefix(globalPrefix, { exclude: ['healthz', 'readyz'] });
+    logger.log(`Routes mounted under /${globalPrefix}`);
+  }
+
+  // With more than one API pod the in-memory Socket.IO adapter would strand
+  // proctoring events on whichever pod raised them. Redis relays them instead.
+  // A failure here is not fatal: one pod still works with the default adapter.
+  const redisUrl = config.get<string>('execution.redisUrl');
+  if (redisUrl) {
+    const adapter = new RedisIoAdapter(app, redisUrl);
+    try {
+      await adapter.connect();
+      app.useWebSocketAdapter(adapter);
+    } catch (err) {
+      logger.warn(
+        `Socket.IO Redis adapter unavailable (${(err as Error).message}) — ` +
+          'proctoring events will not cross pods',
+      );
+    }
+  }
 
   app.enableCors({
     origin: config.get<string[]>('corsOrigin') ?? ['http://localhost:3000'],

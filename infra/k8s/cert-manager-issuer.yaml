@@ -1,0 +1,37 @@
+# Cluster-scoped, so it deliberately carries no namespace.
+#
+# Set the email before applying: Let's Encrypt sends expiry warnings there, and
+# the ACME registration fails on an obviously fake address.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: CHANGE_ME@example.edu
+    privateKeySecretRef:
+      name: letsencrypt-prod-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: nginx
+---
+# Staging issuer. Production Let's Encrypt allows 5 failed authorisations per
+# hostname per hour, and a DNS or ingress mistake burns through that fast.
+# Point the Ingress at this one first; switch to letsencrypt-prod once a
+# certificate is issued (the staging cert will show as untrusted — expected).
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: CHANGE_ME@example.edu
+    privateKeySecretRef:
+      name: letsencrypt-staging-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: nginx

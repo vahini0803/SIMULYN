@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: simulyn
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      initContainers:
+        # Migrations run before any API container accepts traffic. Kept as an
+        # initContainer rather than a Job so a rollout can never serve a new
+        # image against an old schema.
+        - name: migrate
+          image: REPLACE_WITH_ACR/simulyn-api:latest
+          command: ["pnpm", "--filter", "@simulyn/shared", "db:postgres:deploy"]
+          workingDir: /app
+          envFrom:
+            - configMapRef:
+                name: simulyn-config
+            - secretRef:
+                name: simulyn-secrets
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              memory: "512Mi"
+      containers:
+        - name: api
+          image: REPLACE_WITH_ACR/simulyn-api:latest
+          ports:
+            - containerPort: 3001
+              name: http
+          envFrom:
+            - configMapRef:
+                name: simulyn-config
+            - secretRef:
+                name: simulyn-secrets
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              memory: "1Gi"
+          # Off the global prefix (see main.ts), so these paths hold whether or
+          # not API_GLOBAL_PREFIX is set.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3001
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 3001
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          # Migrations plus Nest boot can outrun the liveness delay on a cold
+          # node; this keeps kubelet from restart-looping a pod that is fine.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 3001
+            failureThreshold: 30
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: simulyn
+spec:
+  selector:
+    app: api
+  ports:
+    - port: 3001
+      targetPort: 3001

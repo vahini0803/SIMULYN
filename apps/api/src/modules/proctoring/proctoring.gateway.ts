@@ -320,13 +320,22 @@ export class ProctoringGateway implements OnGatewayConnection, OnGatewayDisconne
   /**
    * Live socket count on this namespace, for the admin health panel.
    *
-   * A namespaced gateway is handed a Namespace rather than a Server, and its
-   * `sockets` is a Map — the Server type declares that property as a Namespace,
-   * so the shape is narrowed here rather than at the field.
+   * fetchSockets() rather than the local `sockets` map: under the Redis adapter
+   * it asks every pod, so the panel reports the whole cluster instead of just
+   * whichever pod served the request. It falls back to the local map if the
+   * call fails, which is what a single-process install does anyway.
    */
-  get connectionCount(): number {
-    const namespace = this.server as unknown as { sockets?: { size?: number } };
-    return namespace?.sockets?.size ?? 0;
+  async connectionCount(): Promise<number> {
+    try {
+      const sockets = await this.server.fetchSockets();
+      return sockets.length;
+    } catch {
+      // A namespaced gateway is handed a Namespace rather than a Server, and
+      // its `sockets` is a Map — the Server type declares that property as a
+      // Namespace, so the shape is narrowed here rather than at the field.
+      const namespace = this.server as unknown as { sockets?: { size?: number } };
+      return namespace?.sockets?.size ?? 0;
+    }
   }
 
   /** Broadcast helper used when an exam window closes for everyone. */

@@ -1,6 +1,12 @@
 export interface AppConfig {
   nodeEnv: string;
   port: number;
+  /**
+   * Mounts every route under a prefix, e.g. 'api'. Empty in development so the
+   * URLs and the test suites stay as they are; set in Kubernetes, where one
+   * hostname is shared with the web app and the ingress splits them by path.
+   */
+  globalPrefix: string;
   corsOrigin: string[];
   jwt: {
     secret: string;
@@ -11,6 +17,8 @@ export interface AppConfig {
   execution: {
     maxConcurrency: number;
     timeoutMs: number;
+    /** Unset means grade in-process; set routes jobs to the executor pool. */
+    redisUrl: string | null;
   };
   mentor: {
     ollamaUrl: string;
@@ -32,6 +40,7 @@ function int(value: string | undefined, fallback: number): number {
 export default (): AppConfig => ({
   nodeEnv: process.env.NODE_ENV ?? 'development',
   port: int(process.env.PORT, 3001),
+  globalPrefix: (process.env.API_GLOBAL_PREFIX ?? '').replace(/^\/+|\/+$/g, ''),
   corsOrigin: (process.env.CORS_ORIGIN ?? 'http://localhost:3000')
     .split(',')
     .map((o) => o.trim())
@@ -45,6 +54,7 @@ export default (): AppConfig => ({
   execution: {
     maxConcurrency: int(process.env.EXEC_MAX_CONCURRENCY, 20),
     timeoutMs: int(process.env.EXEC_TIMEOUT_MS, 8000),
+    redisUrl: process.env.REDIS_URL ?? null,
   },
   mentor: {
     ollamaUrl: process.env.OLLAMA_URL ?? 'http://localhost:11434/api/chat',

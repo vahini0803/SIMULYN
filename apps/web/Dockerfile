@@ -35,10 +35,13 @@ WORKDIR /app
 ENV NODE_ENV=production \
     PORT=3000
 
-COPY --from=builder /app /app
+# The user is created before the copy so ownership can be set as files land.
+RUN addgroup -S simulyn && adduser -S simulyn -G simulyn
 
-RUN addgroup -S simulyn && adduser -S simulyn -G simulyn \
- && chown -R simulyn:simulyn /app
+# --chown rather than a later `chown -R`: re-owning after the fact rewrites
+# every file into a second layer, which was adding 1.3 GB to this image alone.
+COPY --from=builder --chown=simulyn:simulyn /app /app
+
 USER simulyn
 
 EXPOSE 3000

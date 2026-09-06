@@ -1,0 +1,67 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: simulyn
+  namespace: simulyn
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # Code submissions are small, but a pasted file plus a harness is not tiny.
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    # Proctoring sockets stay open for the length of an exam.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # Socket.IO's HTTP long-polling handshake must land on the same replica
+    # every time. The Redis adapter shares broadcasts between pods, but it does
+    # not make one pod able to answer for another pod's polling session.
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "simulyn-affinity"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "86400"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - simulyn.southindia.cloudapp.azure.com
+      secretName: simulyn-tls
+  rules:
+    - host: simulyn.southindia.cloudapp.azure.com
+      http:
+        paths:
+          # No rewrite anywhere in here on purpose. The API mounts its own
+          # routes under /api via API_GLOBAL_PREFIX, so the path the browser
+          # sends is the path the API expects. Stripping the prefix here would
+          # break Swagger, which sits at a literal /api/docs.
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 3001
+
+          # engine.io's endpoint is fixed at the origin root and is not under
+          # the API's prefix, so it needs a rule of its own.
+          - path: /socket.io
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 3001
+
+          # Health probes are excluded from the global prefix, so they answer
+          # here too — handy for an uptime checker.
+          - path: /healthz
+            pathType: Exact
+            backend:
+              service:
+                name: api
+                port:
+                  number: 3001
+
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 3000

@@ -1,0 +1,88 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-backup-pvc
+  namespace: simulyn
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: managed-csi
+  resources:
+    requests:
+      storage: 16Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: simulyn
+spec:
+  # 02:00 IST. The cluster runs UTC, so this is 20:30 UTC the previous day.
+  schedule: "30 20 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: postgres-backup
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: postgres:16-alpine
+              env:
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef:
+                      name: simulyn-secrets
+                      key: POSTGRES_USER
+                # pg_dump reads PGPASSWORD, not POSTGRES_PASSWORD. Wiring the
+                # secret straight through with envFrom leaves it prompting for
+                # a password it can never be given, and the job hangs.
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: simulyn-secrets
+                      key: POSTGRES_PASSWORD
+              command:
+                - /bin/sh
+                - -euc
+                - |
+                  # -e so a failed pg_dump fails the job. Without it the
+                  # pipeline's exit status is gzip's, and a broken backup
+                  # reports success every night until someone needs it.
+                  stamp="$(date -u +%Y%m%d-%H%M%S)"
+                  out="/backups/simulyn-${stamp}.sql.gz"
+
+                  pg_dump -h postgres -d simulyn --no-owner --clean --if-exists \
+                    | gzip -9 > "$out"
+
+                  # An empty or near-empty file means the dump failed in a way
+                  # that still exited 0. Refuse to keep it.
+                  size="$(stat -c %s "$out")"
+                  if [ "$size" -lt 1024 ]; then
+                    echo "backup is only ${size} bytes — treating as failed" >&2
+                    rm -f "$out"
+                    exit 1
+                  fi
+
+                  echo "wrote $out (${size} bytes)"
+                  find /backups -name 'simulyn-*.sql.gz' -mtime +7 -delete
+                  echo "retained:"
+                  ls -la /backups
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+              resources:
+                requests:
+                  cpu: "50m"
+                  memory: "128Mi"
+                limits:
+                  memory: "256Mi"
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: postgres-backup-pvc

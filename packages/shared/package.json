@@ -14,7 +14,11 @@
       "types": "./dist/constants/index.d.ts",
       "default": "./dist/constants/index.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./execution": {
+      "types": "./dist/execution/index.d.ts",
+      "default": "./dist/execution/index.js"
+    }
   },
   "files": [
     "dist",
@@ -25,6 +29,7 @@
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
     "lint": "tsc -p tsconfig.json --noEmit",
     "clean": "rimraf dist",
+    "test": "node test/java-main-class.mjs",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",

@@ -87,12 +87,24 @@ export default function AdminSettingsPage() {
                     ['environment', health.environment],
                     ['database engine', health.database.provider],
                     [
+                      'execution engine',
+                      health.execution.mode === 'queue'
+                        ? 'executor pool (queued)'
+                        : 'in-process',
+                    ],
+                    [
                       'execution slots',
-                      `${health.execution.concurrency.free} free of ${health.execution.concurrency.capacity}${
-                        health.execution.concurrency.queued > 0
-                          ? `, ${health.execution.concurrency.queued} queued`
-                          : ''
-                      }`,
+                      health.execution.queue
+                        ? `${health.execution.queue.active} running, ${health.execution.queue.waiting} queued${
+                            health.execution.queue.failed > 0
+                              ? `, ${health.execution.queue.failed} failed`
+                              : ''
+                          }`
+                        : `${health.execution.concurrency.free} free of ${health.execution.concurrency.capacity}${
+                            health.execution.concurrency.queued > 0
+                              ? `, ${health.execution.concurrency.queued} queued`
+                              : ''
+                          }`,
                     ],
                   ].map(([label, value]) => (
                     <div key={label} className="flex items-baseline justify-between gap-3">

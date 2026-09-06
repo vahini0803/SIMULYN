@@ -1,0 +1,7 @@
+# Copy to terraform.tfvars and adjust. Every value has a working default —
+# override only what you need.
+
+# location       = "southindia"
+# dns_label      = "simulyn"        # must be unique within the region
+# node_vm_size   = "Standard_B2s"
+# node_max_count = 3

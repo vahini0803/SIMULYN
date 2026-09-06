@@ -95,6 +95,7 @@ export class AdminService {
   async health() {
     const memory = process.memoryUsage();
     const database = await this.databaseSize();
+    const connected = await this.proctoring.connectionCount();
 
     return {
       uptimeSeconds: Math.floor((Date.now() - this.startedAt) / 1000),
@@ -112,10 +113,10 @@ export class AdminService {
         sizeBytes: database.bytes,
         path: database.path,
       },
-      execution: this.execution.health(),
+      execution: await this.execution.health(),
       websockets: {
         namespace: '/proctoring',
-        connected: this.proctoring.connectionCount,
+        connected,
       },
     };
   }

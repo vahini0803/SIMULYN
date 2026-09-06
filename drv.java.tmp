@@ -1,0 +1,236 @@
+import java.util.*;
+
+
+class ListNode {
+    int val; ListNode next;
+    ListNode() {}
+    ListNode(int val) { this.val = val; }
+    ListNode(int val, ListNode next) { this.val = val; this.next = next; }
+}
+
+class TreeNode {
+    int val; TreeNode left; TreeNode right;
+    TreeNode() {}
+    TreeNode(int val) { this.val = val; }
+    TreeNode(int val, TreeNode left, TreeNode right) { this.val = val; this.left = left; this.right = right; }
+}
+
+// ── student code ──
+class Solution {
+    public int[] twoSum(int[] nums, int target) { return new int[]{0,1}; }
+}
+// ── driver ──
+public class Main {
+    static class J {
+        int t;                 // 0 null, 1 number, 2 string, 3 bool, 4 array
+        double num;
+        String str = "";
+        boolean bl;
+        List<J> arr = new ArrayList<>();
+    }
+
+    static int _pos;
+
+    static J parse(String s) { _pos = 0; return parseValue(s); }
+
+    static J parseValue(String s) {
+        J v = new J();
+        skipWs(s);
+        if (_pos >= s.length()) return v;
+        char c = s.charAt(_pos);
+        if (c == '[') {
+            v.t = 4; _pos++; skipWs(s);
+            if (_pos < s.length() && s.charAt(_pos) == ']') { _pos++; return v; }
+            while (_pos < s.length()) {
+                v.arr.add(parseValue(s));
+                skipWs(s);
+                if (_pos < s.length() && s.charAt(_pos) == ',') { _pos++; continue; }
+                if (_pos < s.length() && s.charAt(_pos) == ']') _pos++;
+                break;
+            }
+            return v;
+        }
+        if (c == '"') {
+            v.t = 2; _pos++;
+            StringBuilder sb = new StringBuilder();
+            while (_pos < s.length() && s.charAt(_pos) != '"') {
+                char ch = s.charAt(_pos);
+                if (ch == '\\' && _pos + 1 < s.length()) {
+                    _pos++;
+                    char e = s.charAt(_pos++);
+                    if (e == 'n') sb.append('\n');
+                    else if (e == 't') sb.append('\t');
+                    else if (e == 'r') sb.append('\r');
+                    else sb.append(e);
+                } else { sb.append(ch); _pos++; }
+            }
+            if (_pos < s.length()) _pos++;
+            v.str = sb.toString();
+            return v;
+        }
+        if (s.startsWith("true", _pos)) { v.t = 3; v.bl = true; _pos += 4; return v; }
+        if (s.startsWith("false", _pos)) { v.t = 3; v.bl = false; _pos += 5; return v; }
+        if (s.startsWith("null", _pos)) { v.t = 0; _pos += 4; return v; }
+        int start = _pos;
+        while (_pos < s.length()) {
+            char ch = s.charAt(_pos);
+            if (Character.isDigit(ch) || ch == '-' || ch == '+' || ch == '.' || ch == 'e' || ch == 'E') _pos++;
+            else break;
+        }
+        v.t = 1;
+        try { v.num = Double.parseDouble(s.substring(start, _pos)); } catch (Exception ex) { v.num = 0; }
+        return v;
+    }
+
+    static void skipWs(String s) {
+        while (_pos < s.length() && Character.isWhitespace(s.charAt(_pos))) _pos++;
+    }
+
+    static int asInt(J v) { return (int) Math.round(v.num); }
+    static double asDouble(J v) { return v.num; }
+    static boolean asBool(J v) { return v.t == 3 ? v.bl : v.num != 0; }
+    static String asStr(J v) { return v.str; }
+
+    static int[] asIntArr(J v) {
+        int[] r = new int[v.arr.size()];
+        for (int i = 0; i < r.length; i++) r[i] = asInt(v.arr.get(i));
+        return r;
+    }
+
+    static String[] asStrArr(J v) {
+        String[] r = new String[v.arr.size()];
+        for (int i = 0; i < r.length; i++) {
+            J e = v.arr.get(i);
+            r[i] = e.t == 2 ? e.str : String.valueOf((long) Math.round(e.num));
+        }
+        return r;
+    }
+
+    static String[][] asGrid(J v) {
+        String[][] r = new String[v.arr.size()][];
+        for (int i = 0; i < r.length; i++) r[i] = asStrArr(v.arr.get(i));
+        return r;
+    }
+
+    static ListNode asList(J v) {
+        ListNode head = null, tail = null;
+        for (J e : v.arr) {
+            ListNode n = new ListNode(asInt(e));
+            if (head == null) { head = n; tail = n; } else { tail.next = n; tail = n; }
+        }
+        return head;
+    }
+
+    static TreeNode asTree(J v) {
+        if (v.arr.isEmpty()) return null;
+        TreeNode root = new TreeNode(asInt(v.arr.get(0)));
+        Deque<TreeNode> q = new ArrayDeque<>();
+        q.add(root);
+        int i = 1;
+        while (!q.isEmpty() && i < v.arr.size()) {
+            TreeNode n = q.poll();
+            if (i < v.arr.size()) { J e = v.arr.get(i++); if (e.t != 0) { n.left = new TreeNode(asInt(e)); q.add(n.left); } }
+            if (i < v.arr.size()) { J e = v.arr.get(i++); if (e.t != 0) { n.right = new TreeNode(asInt(e)); q.add(n.right); } }
+        }
+        return root;
+    }
+
+    static String esc(String s) {
+        StringBuilder o = new StringBuilder();
+        for (char c : s.toCharArray()) {
+            if (c == '"' || c == '\\') o.append('\\').append(c);
+            else if (c == '\n') o.append("\\n");
+            else if (c == '\t') o.append("\\t");
+            else if (c == '\r') o.append("\\r");
+            else o.append(c);
+        }
+        return o.toString();
+    }
+
+    static String num(double d) {
+        if (d == Math.rint(d) && !Double.isInfinite(d)) return String.valueOf((long) d);
+        return String.valueOf(d);
+    }
+
+    /** Serialises whatever the student's method returned. */
+    static String toJson(Object o) {
+        if (o == null) return "null";
+        if (o instanceof Boolean) return ((Boolean) o) ? "true" : "false";
+        if (o instanceof Integer || o instanceof Long || o instanceof Short || o instanceof Byte) return o.toString();
+        if (o instanceof Double || o instanceof Float) return num(((Number) o).doubleValue());
+        if (o instanceof Character) return "\"" + esc(o.toString()) + "\"";
+        if (o instanceof String) return "\"" + esc((String) o) + "\"";
+        if (o instanceof ListNode) {
+            StringBuilder sb = new StringBuilder("[");
+            ListNode n = (ListNode) o;
+            int guard = 0;
+            while (n != null && guard++ < 100000) { if (guard > 1) sb.append(','); sb.append(n.val); n = n.next; }
+            return sb.append(']').toString();
+        }
+        if (o instanceof TreeNode) {
+            List<String> out = new ArrayList<>();
+            Deque<TreeNode> q = new ArrayDeque<>();
+            q.add((TreeNode) o);
+            while (!q.isEmpty()) {
+                TreeNode n = q.poll();
+                if (n == null) { out.add("null"); continue; }
+                out.add(String.valueOf(n.val));
+                q.add(n.left); q.add(n.right);
+            }
+            while (!out.isEmpty() && out.get(out.size() - 1).equals("null")) out.remove(out.size() - 1);
+            return "[" + String.join(",", out) + "]";
+        }
+        if (o instanceof int[]) {
+            int[] a = (int[]) o;
+            StringBuilder sb = new StringBuilder("[");
+            for (int i = 0; i < a.length; i++) { if (i > 0) sb.append(','); sb.append(a[i]); }
+            return sb.append(']').toString();
+        }
+        if (o instanceof double[]) {
+            double[] a = (double[]) o;
+            StringBuilder sb = new StringBuilder("[");
+            for (int i = 0; i < a.length; i++) { if (i > 0) sb.append(','); sb.append(num(a[i])); }
+            return sb.append(']').toString();
+        }
+        if (o instanceof boolean[]) {
+            boolean[] a = (boolean[]) o;
+            StringBuilder sb = new StringBuilder("[");
+            for (int i = 0; i < a.length; i++) { if (i > 0) sb.append(','); sb.append(a[i]); }
+            return sb.append(']').toString();
+        }
+        if (o instanceof Object[]) {
+            Object[] a = (Object[]) o;
+            StringBuilder sb = new StringBuilder("[");
+            for (int i = 0; i < a.length; i++) { if (i > 0) sb.append(','); sb.append(toJson(a[i])); }
+            return sb.append(']').toString();
+        }
+        if (o instanceof Collection) {
+            StringBuilder sb = new StringBuilder("[");
+            boolean first = true;
+            for (Object e : (Collection<?>) o) { if (!first) sb.append(','); sb.append(toJson(e)); first = false; }
+            return sb.append(']').toString();
+        }
+        return "\"" + esc(o.toString()) + "\"";
+    }
+
+    static String[] _lines = new String[0];
+
+    static String _line(int i) { return i < _lines.length ? _lines[i] : ""; }
+
+    public static void main(String[] args) throws Exception {
+        StringBuilder _sb = new StringBuilder();
+        try (java.io.InputStreamReader _isr = new java.io.InputStreamReader(System.in, java.nio.charset.StandardCharsets.UTF_8)) {
+            char[] _buf = new char[8192];
+            int _n;
+            while ((_n = _isr.read(_buf)) > 0) _sb.append(_buf, 0, _n);
+        }
+        String _raw = _sb.toString();
+        _lines = _raw.replace("\r\n", "\n").replace("\r", "\n").split("\n", -1);
+
+        int[] _a0 = asIntArr(parse(_line(0)));
+        int _a1 = asInt(parse(_line(1)));
+        Solution _sol = new Solution();
+        Object _res = _sol.twoSum(_a0, _a1);
+        System.out.println("\n__SIMULYN_RESULT__" + toJson(_res));
+    }
+}

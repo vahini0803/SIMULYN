@@ -1,0 +1,172 @@
+name: Build & Deploy to AKS
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  # A second push while a deploy is mid-rollout would race it.
+  group: deploy-aks
+  cancel-in-progress: false
+
+env:
+  AKS_CLUSTER: aks-simulyn
+  AKS_RESOURCE_GROUP: rg-simulyn
+  PUBLIC_HOST: simulyn.southindia.cloudapp.azure.com
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    outputs:
+      registry: ${{ steps.acr.outputs.login_server }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # Terraform generates the registry name with a random suffix, so it
+      # cannot be hard-coded here. ACR_NAME comes from `terraform output`.
+      - name: Resolve ACR
+        id: acr
+        run: |
+          set -euo pipefail
+          server=$(az acr show --name "${{ secrets.ACR_NAME }}" --query loginServer -o tsv)
+          echo "login_server=$server" >> "$GITHUB_OUTPUT"
+          echo "Registry: $server"
+
+      - name: Log in to ACR
+        run: az acr login --name "${{ secrets.ACR_NAME }}"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Three images off one context. Buildx layer caching through GitHub
+      # Actions keeps the pnpm install out of every rebuild.
+      - name: Build and push API
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.acr.outputs.login_server }}/simulyn-api:${{ github.sha }}
+            ${{ steps.acr.outputs.login_server }}/simulyn-api:latest
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+
+      - name: Build and push Executor
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/executor/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.acr.outputs.login_server }}/simulyn-executor:${{ github.sha }}
+            ${{ steps.acr.outputs.login_server }}/simulyn-executor:latest
+          cache-from: type=gha,scope=executor
+          cache-to: type=gha,scope=executor,mode=max
+
+      # NEXT_PUBLIC_* is inlined by Next.js at build time, so the public API
+      # URL has to be a build arg. Changing it means rebuilding this image —
+      # editing the ConfigMap alone will not move it.
+      - name: Build and push Web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=https://${{ env.PUBLIC_HOST }}/api
+          tags: |
+            ${{ steps.acr.outputs.login_server }}/simulyn-web:${{ github.sha }}
+            ${{ steps.acr.outputs.login_server }}/simulyn-web:latest
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: ${{ needs.build-and-push.outputs.registry }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set AKS context
+        uses: azure/aks-set-context@v4
+        with:
+          resource-group: ${{ env.AKS_RESOURCE_GROUP }}
+          cluster-name: ${{ env.AKS_CLUSTER }}
+
+      # Fails the deploy early with a clear message rather than leaving pods in
+      # CreateContainerConfigError for someone to discover later.
+      - name: Verify secrets exist on the cluster
+        run: |
+          set -euo pipefail
+          if ! kubectl -n simulyn get secret simulyn-secrets >/dev/null 2>&1; then
+            echo "::error::simulyn-secrets is missing. Create it once by hand —"
+            echo "::error::see 'First-Time Azure Setup' in the implementation plan."
+            exit 1
+          fi
+
+      - name: Pin image tags to this commit
+        run: |
+          set -euo pipefail
+          for f in infra/k8s/api.yaml infra/k8s/web.yaml infra/k8s/executor.yaml; do
+            sed -i "s|REPLACE_WITH_ACR/\(simulyn-[a-z]*\):latest|${REGISTRY}/\1:${{ github.sha }}|g" "$f"
+            grep -n "image:" "$f"
+          done
+
+      - name: Apply manifests
+        run: |
+          set -euo pipefail
+          # Ordered, not `kubectl apply -f infra/k8s/`: the namespace has to
+          # exist first, and that glob would also apply secrets.example.yaml
+          # and overwrite the real secret with empty strings.
+          kubectl apply -f infra/k8s/namespace.yaml
+          kubectl apply -f infra/k8s/configmap.yaml
+          kubectl apply -f infra/k8s/network-policy.yaml
+          kubectl apply -f infra/k8s/postgres.yaml
+          kubectl apply -f infra/k8s/redis.yaml
+          kubectl apply -f infra/k8s/api.yaml
+          kubectl apply -f infra/k8s/executor.yaml
+          kubectl apply -f infra/k8s/web.yaml
+          kubectl apply -f infra/k8s/ingress.yaml
+          kubectl apply -f infra/k8s/pg-backup-cronjob.yaml
+
+      - name: Wait for rollout
+        run: |
+          set -euo pipefail
+          # Longer than the plan's 120s: the API's initContainer runs migrations
+          # before the pod reports ready, and a cold image pull is not fast.
+          kubectl -n simulyn rollout status statefulset/postgres --timeout=300s
+          kubectl -n simulyn rollout status statefulset/redis --timeout=180s
+          kubectl -n simulyn rollout status deployment/api --timeout=420s
+          kubectl -n simulyn rollout status deployment/executor --timeout=300s
+          kubectl -n simulyn rollout status deployment/web --timeout=300s
+
+      - name: Smoke-check the deployment
+        run: |
+          set -euo pipefail
+          kubectl -n simulyn run curl-check --rm -i --restart=Never \
+            --image=curlimages/curl:8.10.1 -- \
+            -fsS -m 10 http://api:3001/healthz
+          echo "API is answering."
+
+      - name: Report failure detail
+        if: failure()
+        run: |
+          kubectl -n simulyn get pods -o wide || true
+          kubectl -n simulyn get events --sort-by=.lastTimestamp | tail -30 || true
+          for d in api executor web; do
+            echo "── $d ──"
+            kubectl -n simulyn logs "deployment/$d" --tail=50 --all-containers || true
+          done

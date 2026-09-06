@@ -72,11 +72,23 @@ const errRun = await req('POST', '/execute/run', {
 });
 check('runtime error -> stderr + non-zero exit', !errRun.body.ok && errRun.body.stderr.includes('ValueError') && errRun.body.exitCode !== 0, JSON.stringify(errRun.body));
 
+// Whether g++ exists depends on where the job actually runs: nothing on a bare
+// Windows dev box, everything inside the executor image. So this asserts the
+// property that holds either way — a clean 200 that either compiles or reports
+// the missing toolchain, never a crash or a 5xx.
 const cppRun = await req('POST', '/execute/run', {
   token: student.token,
   body: { code: 'int main(){return 0;}', lang: 'cpp' },
 });
-check('missing toolchain -> clean compileError, no crash', cppRun.status === 200 && typeof cppRun.body.compileError === 'string' && cppRun.body.compileError.includes('not installed'), JSON.stringify(cppRun.body));
+const cppToolchainMissing =
+  typeof cppRun.body.compileError === 'string' && cppRun.body.compileError.includes('not installed');
+const cppCompiled = cppRun.body.compileError === null && cppRun.body.ok === true;
+check(
+  'cpp toolchain present or absent -> clean response, no crash',
+  cppRun.status === 200 && (cppToolchainMissing || cppCompiled),
+  JSON.stringify(cppRun.body),
+);
+console.log(`        cpp toolchain: ${cppToolchainMissing ? 'absent (reported cleanly)' : 'present (compiled)'}`);
 
 const loopRun = await req('POST', '/execute/run', {
   token: student.token,

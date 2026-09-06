@@ -19,6 +19,21 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # appendonly keeps in-flight jobs across a restart; losing the queue would
+    # strand every submission that was waiting on a result.
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redisdata:/data
+    # Not published: only api and executor need to reach it.
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   api:
     build:
       context: .
@@ -38,11 +53,35 @@ services:
       CLOUD_LLM_API_KEY: ${CLOUD_LLM_API_KEY:-}
       EXEC_MAX_CONCURRENCY: ${EXEC_MAX_CONCURRENCY:-20}
       EXEC_TIMEOUT_MS: ${EXEC_TIMEOUT_MS:-8000}
+      # Set, so the API hands student code to the executor instead of running
+      # it itself. Unset it and the API silently falls back to in-process.
+      REDIS_URL: redis://redis:6379
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     extra_hosts:
       - 'host.docker.internal:host-gateway'
+    mem_limit: 2g
+    pids_limit: 256
+
+  executor:
+    build:
+      context: .
+      dockerfile: apps/executor/Dockerfile
+    restart: unless-stopped
+    # Scale this instead of the API when grading backs up:
+    #   docker compose -f docker-compose.prod.yml up -d --scale executor=3
+    # Not published: it is reached through the queue, never over HTTP.
+    environment:
+      NODE_ENV: production
+      REDIS_URL: redis://redis:6379
+      EXEC_MAX_CONCURRENCY: ${EXEC_MAX_CONCURRENCY:-20}
+      EXEC_TIMEOUT_MS: ${EXEC_TIMEOUT_MS:-8000}
+    depends_on:
+      redis:
+        condition: service_healthy
     # Untrusted code runs in here: cap what one container can take from the box.
     mem_limit: 4g
     pids_limit: 512
@@ -63,3 +102,4 @@ services:
 
 volumes:
   pgdata:
+  redisdata:

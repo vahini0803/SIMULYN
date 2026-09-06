@@ -1,8 +1,10 @@
 import type { Metadata } from 'next';
-import { Inter, JetBrains_Mono } from 'next/font/google';
+import { Inter, JetBrains_Mono, Syne } from 'next/font/google';
 import { Toaster } from 'sonner';
 
+import { ConsentGate } from '@/components/research/consent-gate';
 import { AuthProvider } from '@/hooks/useAuth';
+import { ThemeProvider } from '@/hooks/useTheme';
 import './globals.css';
 
 const inter = Inter({
@@ -17,6 +19,12 @@ const jetbrains = JetBrains_Mono({
   display: 'swap',
 });
 
+const syne = Syne({
+  subsets: ['latin'],
+  variable: '--font-syne',
+  display: 'swap',
+});
+
 export const metadata: Metadata = {
   title: 'SIMULYN — Virtual Engineering Labs',
   description:
@@ -25,21 +33,24 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
+    <html lang="en" className={`${inter.variable} ${jetbrains.variable} ${syne.variable}`}>
       <body className="min-h-dvh antialiased">
-        <AuthProvider>
-          <div className="relative z-10">{children}</div>
-          <Toaster
-            position="bottom-right"
-            toastOptions={{
-              style: {
-                background: '#11111f',
-                border: '1px solid #ffffff1f',
-                color: '#e9e9f2',
-              },
-            }}
-          />
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <div className="relative z-10">{children}</div>
+            <ConsentGate />
+            <Toaster
+              position="bottom-right"
+              toastOptions={{
+                style: {
+                  background: '#11111f',
+                  border: '1px solid #ffffff1f',
+                  color: '#e9e9f2',
+                },
+              }}
+            />
+          </AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

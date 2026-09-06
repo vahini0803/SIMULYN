@@ -1,4 +1,3 @@
-import { Logger } from '@nestjs/common';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -39,6 +38,21 @@ export const DEFAULT_COMPILE_TIMEOUT_MS = 20_000;
 export const DEFAULT_MAX_OUTPUT = 64 * 1024;
 export const MAX_CODE_LENGTH = 100_000;
 
+/**
+ * Minimal logging surface.
+ *
+ * This module runs in the API today and in the executor microservice next, so
+ * it takes a logger rather than importing one — pulling `@nestjs/common` into
+ * `@simulyn/shared` would drag Nest into every consumer, the web app included.
+ */
+export interface ExecutorLogger {
+  warn(message: string): void;
+}
+
+const consoleLogger: ExecutorLogger = {
+  warn: (message) => console.warn(`[Executor] ${message}`),
+};
+
 const isWindows = process.platform === 'win32';
 
 /**
@@ -49,12 +63,13 @@ const isWindows = process.platform === 'win32';
  * semaphore, wall-clock timeouts, output truncation and a code-length cap.
  */
 export class Executor {
-  private readonly logger = new Logger(Executor.name);
+  private readonly logger: ExecutorLogger;
   private readonly semaphore: Semaphore;
   private readonly toolchain = new Map<string, string | null>();
 
-  constructor(maxConcurrency = 20) {
+  constructor(maxConcurrency = 20, logger: ExecutorLogger = consoleLogger) {
     this.semaphore = new Semaphore(maxConcurrency);
+    this.logger = logger;
   }
 
   get concurrency() {
@@ -366,17 +381,91 @@ export class Executor {
 }
 
 /**
+ * Brace depth at every offset, with braces inside comments, string literals and
+ * char literals ignored.
+ *
+ * Needed because "which class declares main" cannot be answered by a regex
+ * alone: a nested helper class declared before `main` is not a launch target.
+ */
+function braceDepths(source: string): Int32Array {
+  const depths = new Int32Array(source.length);
+  let depth = 0;
+  let i = 0;
+
+  while (i < source.length) {
+    const c = source[i];
+    const next = source[i + 1];
+
+    if (c === '/' && next === '/') {
+      while (i < source.length && source[i] !== '\n') depths[i++] = depth;
+      continue;
+    }
+
+    if (c === '/' && next === '*') {
+      depths[i++] = depth;
+      depths[i++] = depth;
+      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) depths[i++] = depth;
+      if (i < source.length) depths[i++] = depth;
+      if (i < source.length) depths[i++] = depth;
+      continue;
+    }
+
+    if (c === '"' || c === "'") {
+      const quote = c;
+      depths[i++] = depth;
+      while (i < source.length && source[i] !== quote) {
+        // Skip the escaped character too, so \" does not close the literal.
+        if (source[i] === '\\') depths[i++] = depth;
+        if (i < source.length) depths[i++] = depth;
+      }
+      if (i < source.length) depths[i++] = depth;
+      continue;
+    }
+
+    if (c === '{') {
+      depths[i++] = depth;
+      depth++;
+      continue;
+    }
+
+    if (c === '}') {
+      depth = Math.max(0, depth - 1);
+      depths[i++] = depth;
+      continue;
+    }
+
+    depths[i++] = depth;
+  }
+
+  return depths;
+}
+
+/**
  * Finds the class declaring `main`, so free-form Java snippets (Run mode) work
  * even when the class is not called Main.
+ *
+ * Only top-level classes count. The generated harness driver declares a nested
+ * `static class J` helper inside `Main` and above `main`, so taking the last
+ * class seen before `main` picks `J` — and `java -cp <dir> J` then fails with
+ * ClassNotFoundException on every test case.
  */
 export function detectJavaMainClass(source: string): string | null {
   const mainIndex = source.search(/static\s+(public\s+)?void\s+main\s*\(/);
   if (mainIndex === -1) return null;
 
-  const before = source.slice(0, mainIndex);
-  const declarations = [...before.matchAll(/\bclass\s+([A-Za-z_$][\w$]*)/g)];
-  const last = declarations.at(-1);
-  return last ? last[1] : null;
+  const depths = braceDepths(source);
+
+  let candidate: string | null = null;
+  for (const match of source.matchAll(/\bclass\s+([A-Za-z_$][\w$]*)/g)) {
+    const at = match.index ?? 0;
+    if (at >= mainIndex) break;
+    // Depth 0 is a top-level declaration; anything deeper is nested inside
+    // another class and cannot be launched.
+    if (depths[at] !== 0) continue;
+    candidate = match[1];
+  }
+
+  return candidate;
 }
 
 /**

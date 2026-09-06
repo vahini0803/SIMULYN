@@ -518,8 +518,13 @@ export interface SystemHealth {
   memory: { rssBytes: number; heapUsedBytes: number; heapTotalBytes: number };
   database: { provider: string; sizeBytes: number | null; path: string | null };
   execution: {
+    /** 'queue' means a separate executor pod runs student code. */
+    mode: 'queue' | 'inline';
     languages: Record<LangKey, boolean>;
+    /** The in-process fallback pool — the live engine only in inline mode. */
     concurrency: { capacity: number; free: number; queued: number };
+    /** Present in queue mode, absent if Redis could not be reached. */
+    queue?: { waiting: number; active: number; delayed: number; failed: number };
     timeoutMs: number;
   };
   websockets: { namespace: string; connected: number };

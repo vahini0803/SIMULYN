@@ -15,7 +15,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-import { MAX_CODE_LENGTH } from '../executor';
+import { MAX_CODE_LENGTH } from '@simulyn/shared/execution';
 
 export class RunCodeDto {
   @ApiProperty({ description: 'Source code to execute as-is' })

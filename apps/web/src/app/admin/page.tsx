@@ -159,7 +159,11 @@ export default function AdminHome() {
                       ['sockets', `${health.websockets.connected} connected`],
                       [
                         'executor',
-                        `${health.execution.concurrency.free}/${health.execution.concurrency.capacity} free`,
+                        // In queue mode the API's own pool sits idle, so the
+                        // backlog is the number that says anything.
+                        health.execution.queue
+                          ? `${health.execution.queue.active} running · ${health.execution.queue.waiting} queued`
+                          : `${health.execution.concurrency.free}/${health.execution.concurrency.capacity} free`,
                       ],
                     ].map(([label, value]) => (
                       <div key={label} className="flex items-baseline justify-between gap-2">

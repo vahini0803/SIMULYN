@@ -16,6 +16,16 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   api:
     build:
       context: .
@@ -31,8 +41,11 @@ services:
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434/api/chat}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-phi3}
       EXEC_MAX_CONCURRENCY: ${EXEC_MAX_CONCURRENCY:-20}
+      REDIS_URL: redis://redis:6379
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     extra_hosts:
       - 'host.docker.internal:host-gateway'
@@ -40,6 +53,17 @@ services:
     command: >
       sh -c "pnpm --filter @simulyn/shared db:postgres:deploy &&
              node apps/api/dist/main.js"
+
+  executor:
+    build:
+      context: .
+      dockerfile: apps/executor/Dockerfile
+    environment:
+      REDIS_URL: redis://redis:6379
+      EXEC_MAX_CONCURRENCY: ${EXEC_MAX_CONCURRENCY:-20}
+    depends_on:
+      redis:
+        condition: service_healthy
 
   web:
     build:

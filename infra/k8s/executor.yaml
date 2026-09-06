@@ -1,0 +1,133 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: executor
+  namespace: simulyn
+spec:
+  # The HPA below owns this number once it is running; 2 is the cold-start
+  # floor so the first submission of the day does not wait on a pod pull.
+  replicas: 2
+  selector:
+    matchLabels:
+      app: executor
+  template:
+    metadata:
+      labels:
+        app: executor
+    spec:
+      # Spread replicas across nodes where possible, so losing one node does
+      # not take the whole pool with it.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: executor
+      containers:
+        - name: executor
+          image: REPLACE_WITH_ACR/simulyn-executor:latest
+          ports:
+            - containerPort: 3002
+              name: http
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: EXECUTOR_PORT
+              value: "3002"
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: simulyn-config
+                  key: REDIS_URL
+            - name: EXEC_MAX_CONCURRENCY
+              valueFrom:
+                configMapKeyRef:
+                  name: simulyn-config
+                  key: EXEC_MAX_CONCURRENCY
+            - name: EXEC_TIMEOUT_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: simulyn-config
+                  key: EXEC_TIMEOUT_MS
+          # No database credentials and no LLM key: this pod runs untrusted
+          # code, so it is given nothing worth stealing. It reaches Redis and
+          # nothing else (see network-policy.yaml).
+          resources:
+            requests:
+              cpu: "150m"
+              memory: "384Mi"
+            limits:
+              # Compiling C++ and starting a JVM are both spiky. A CPU limit
+              # here would throttle a compile into the 8s wall clock and fail
+              # correct submissions, so only memory is capped.
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3002
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 3002
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      # Give an in-flight submission time to finish before the pod goes away.
+      terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: executor
+  namespace: simulyn
+spec:
+  selector:
+    app: executor
+  ports:
+    - port: 3002
+      targetPort: 3002
+---
+# CPU-based autoscaling, which works on a stock AKS cluster with nothing extra
+# installed. It is a proxy for load rather than a direct read of the queue: the
+# pool scales once the pods it has are busy, so a burst waits a beat before
+# capacity arrives. For scaling on actual queue depth, apply
+# executor-keda.yaml instead — it needs KEDA installed.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: executor
+  namespace: simulyn
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: executor
+  minReplicas: 2
+  # 6, not the plan's 8: at 384Mi requested each, 8 replicas plus the rest of
+  # the stack does not fit three B2s nodes. Raise this together with
+  # node_max_count in Terraform.
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      # Exams arrive all at once; add capacity quickly.
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 30
+    scaleDown:
+      # Come down slowly — a lull mid-exam is not the end of the exam.
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120

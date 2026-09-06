@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: simulyn-config
+  namespace: simulyn
+data:
+  NODE_ENV: "production"
+  PORT: "3001"
+
+  # One hostname serves both apps; the ingress splits them by path. This is
+  # what makes the API answer on /api/* — without it every route would sit at
+  # the root and collide with the web app.
+  API_GLOBAL_PREFIX: "api"
+
+  # Must match the public hostname exactly, scheme included, or the browser
+  # drops every response for a missing Access-Control-Allow-Origin.
+  CORS_ORIGIN: "https://simulyn.southindia.cloudapp.azure.com"
+
+  # Baked into the web bundle at image build time (see the deploy workflow),
+  # not read at runtime. Kept here so both places have one source of truth.
+  NEXT_PUBLIC_API_URL: "https://simulyn.southindia.cloudapp.azure.com/api"
+
+  EXEC_MAX_CONCURRENCY: "20"
+  EXEC_TIMEOUT_MS: "8000"
+
+  CLOUD_LLM_PROVIDER: "anthropic"
+  CLOUD_LLM_MODEL: "claude-sonnet-5"
+
+  REDIS_URL: "redis://redis:6379"

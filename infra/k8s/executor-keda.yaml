@@ -1,0 +1,33 @@
+# Optional: scale the executor pool on real queue depth instead of CPU.
+#
+# Requires KEDA on the cluster:
+#   helm repo add kedacore https://kedacore.github.io/charts
+#   helm install keda kedacore/keda --namespace keda --create-namespace
+#
+# Apply this INSTEAD OF the HorizontalPodAutoscaler in executor.yaml — KEDA
+# creates its own HPA, and two autoscalers pointed at one Deployment will fight
+# each other. Delete the built-in one first:
+#   kubectl -n simulyn delete hpa executor
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: executor
+  namespace: simulyn
+spec:
+  scaleTargetRef:
+    name: executor
+  minReplicaCount: 2
+  maxReplicaCount: 6
+  pollingInterval: 15
+  cooldownPeriod: 300
+  triggers:
+    - type: redis
+      metadata:
+        address: redis:6379
+        # BullMQ keeps waiting jobs in a Redis list named after the queue.
+        # EXECUTION_QUEUE is 'code-execution' in packages/shared/src/execution/jobs.ts —
+        # change both together or the scaler silently watches nothing.
+        listName: "bull:code-execution:wait"
+        # Add a pod for roughly every 5 queued jobs.
+        listLength: "5"
+        enableTLS: "false"

@@ -4,7 +4,7 @@ import { Transform } from 'class-transformer';
 import { IsBoolean, IsEnum, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
 import { PaginationDto } from '../../../common/dto/pagination.dto';
-import { MAX_CODE_LENGTH } from '../../execution/executor';
+import { MAX_CODE_LENGTH } from '@simulyn/shared/execution';
 
 export class CreateSubmissionDto {
   @ApiProperty()

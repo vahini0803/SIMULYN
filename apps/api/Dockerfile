@@ -46,12 +46,15 @@ ENV NODE_ENV=production \
     JAVAC_BIN=/usr/lib/jvm/java-17-openjdk/bin/javac \
     JAVA_BIN=/usr/lib/jvm/java-17-openjdk/bin/java
 
-# Copied wholesale so pnpm's symlinked node_modules stay intact.
-COPY --from=builder /app /app
+# Untrusted student code runs here, so never as root. The user is created
+# before the copy so ownership can be set as the files land.
+RUN addgroup -S simulyn && adduser -S simulyn -G simulyn
 
-# Untrusted student code runs here, so never as root.
-RUN addgroup -S simulyn && adduser -S simulyn -G simulyn \
- && chown -R simulyn:simulyn /app
+# Copied wholesale so pnpm's symlinked node_modules stay intact. --chown
+# rather than a later `chown -R`: re-owning after the fact rewrites every
+# file into a second layer, which nearly doubled the image size.
+COPY --from=builder --chown=simulyn:simulyn /app /app
+
 USER simulyn
 
 EXPOSE 3001
